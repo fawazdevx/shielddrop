@@ -1,0 +1,13 @@
+node_modules
+dist
+out
+cache
+cache_hardhat
+.env
+.env.local
+.DS_Store
+coverage
+.agents
+.claude
+.codex
+.vite-cache
