@@ -1,16 +1,13 @@
-import { createRequire } from "node:module";
-import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react-swc";
 import { defineConfig } from "vite";
 import topLevelAwait from "vite-plugin-top-level-await";
 import wasm from "vite-plugin-wasm";
 
 // TokenOps's `/fhe` entry imports `RelayerWeb` / `SepoliaConfig` from the bare
-// `@zama-fhe/sdk` root, a layout that only exists in 3.0.x. Resolve through
-// Node so this works whether npm installs the workspace dependency under
-// `frontend/node_modules` locally or hoists it to root `node_modules` on Vercel.
-const require = createRequire(import.meta.url);
-const zamaSdk = dirname(require.resolve("@zama-fhe/sdk/package.json"));
+// `@zama-fhe/sdk` root, a layout that only exists in 3.0.x. Keep this alias on
+// the root install because Vercel runs the build from the workspace root.
+const zamaSdk = fileURLToPath(new URL("../node_modules/@zama-fhe/sdk", import.meta.url));
 
 // The Zama relayer (`@zama-fhe/sdk/web`, used by TokenOps's
 // `createSepoliaEncryptorWeb`) ships a Web Worker + WASM and relies on
