@@ -4,13 +4,6 @@ Confidential token distribution OS for the Zama Developer Program Mainnet Season
 
 ShieldDrop lets teams create private token distribution campaigns for airdrops, investor payouts, contributor rewards, grants, and token unlocks. Allocation amounts remain encrypted onchain with Zama FHEVM. Recipients connect a wallet, verify eligibility, claim privately, and decrypt only their own allocation through the Zama user-decryption flow.
 
-## Why this should win
-
-- Directly targets the TokenOps Special Bounty: confidential airdrop and disperse flows with a polished frontend.
-- Also qualifies as a Builder Track app: smart contract, production-style frontend, documentation, and demo flow.
-- Uses the official Zama confidential wrapper registry on Sepolia instead of custom fragmented wrappers.
-- Treats privacy as a product workflow, not only a protocol demo.
-
 ## Project Layout
 
 - `contracts/` - Foundry contracts for campaign creation, encrypted allocation bookkeeping, registry validation, and claim authorization.

@@ -1,15 +1,46 @@
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react-swc";
 import { defineConfig } from "vite";
+import topLevelAwait from "vite-plugin-top-level-await";
+import wasm from "vite-plugin-wasm";
 
+// TokenOps's `/fhe` entry imports `RelayerWeb` / `SepoliaConfig` from the bare
+// `@zama-fhe/sdk` root, a layout that only exists in 3.0.x. npm may hoist a
+// newer 3.2.x to the workspace root, so pin resolution to the frontend's 3.0.0
+// copy for both dev and build.
+const zamaSdk = fileURLToPath(new URL("./node_modules/@zama-fhe/sdk", import.meta.url));
+
+// The Zama relayer (`@zama-fhe/sdk/web`, used by TokenOps's
+// `createSepoliaEncryptorWeb`) ships a Web Worker + WASM and relies on
+// top-level await. `wasm` + `topLevelAwait` let Vite bundle it, and we keep it
+// out of the dep pre-bundler so the worker/WASM graph is resolved natively.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [wasm(), topLevelAwait(), react()],
   cacheDir: ".vite-cache",
+  resolve: {
+    alias: {
+      "@zama-fhe/sdk": zamaSdk
+    }
+  },
+  define: {
+    global: "globalThis"
+  },
+  optimizeDeps: {
+    exclude: ["@zama-fhe/sdk"]
+  },
+  build: {
+    target: "esnext"
+  },
+  worker: {
+    format: "es"
+  },
   server: {
-    host: "127.0.0.1",
-    port: 5177
+    host: "0.0.0.0",
+    port: 5177,
+    allowedHosts: true
   },
   preview: {
-    host: "127.0.0.1",
+    host: "0.0.0.0",
     port: 4177
   }
 });

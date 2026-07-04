@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ClipboardCheck,
+  Copy,
   Download,
   Eye,
   FileLock2,
@@ -25,20 +26,30 @@ import {
 } from "lucide-react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Hex } from "viem";
 import { Landing } from "./components/Landing";
 import { EncryptedValue, Spinner, ToastStack, type Toast, type ToastTone } from "./components/primitives";
-import { auditTrail, initialCampaign, metrics, sampleCsv, wrapperPairs, ZERO_ADDRESS } from "./lib/constants";
-import { buildAuditExport, campaignTotal, claimRate, compactAddress, downloadText, formatUnits, parseRecipientsCsv } from "./lib/format";
+import { auditTrail, csvTemplate, initialCampaign, metrics, sampleCsv, wrapperPairs, ZERO_ADDRESS } from "./lib/constants";
+import { buildAuditExport, campaignTotal, claimRate, compactAddress, downloadText, formatUnits, isAddress, parseRecipientsCsv } from "./lib/format";
 import {
-  createTokenOpsAdapter,
   type TokenOpsDistributionResult,
+  type TokenOpsMode,
   type TokenOpsReadiness
 } from "./lib/tokenops";
 import type { Address, Campaign, CampaignStatus, Recipient, WrapperPair } from "./lib/types";
+import { useDistributionRuntime, type ClaimContext, type RuntimeStatus } from "./lib/useDistributionRuntime";
 import { createZamaClient } from "./lib/zama";
 
-const tokenOps = createTokenOpsAdapter();
 const zama = createZamaClient();
+const CLAIM_SESSION_STORAGE_KEY = "shielddrop:last-claim-session";
+
+type StoredRecipient = Omit<Recipient, "amount"> & { amount: string };
+type StoredCampaign = Omit<Campaign, "recipients"> & { recipients: StoredRecipient[] };
+type StoredClaimSession = {
+  campaign: StoredCampaign;
+  tokenOpsResult: TokenOpsDistributionResult;
+  savedAt: string;
+};
 
 function App() {
   const [entered, setEntered] = useState(false);
@@ -49,9 +60,29 @@ function App() {
   const [selectedRecipientId, setSelectedRecipientId] = useState(campaign.recipients[1]?.id ?? "");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [tokenOpsResult, setTokenOpsResult] = useState<TokenOpsDistributionResult | null>(null);
+  const [distributionMode, setDistributionMode] = useState<TokenOpsMode>("confidential-airdrop");
+  const [claimLinkContext, setClaimLinkContext] = useState<{ recipient: Address; context: ClaimContext } | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastSeq = useRef(0);
   const greeted = useRef(false);
+  const runtime = useDistributionRuntime(distributionMode);
+  const tokenOps = runtime.tokenOps;
+
+  /** Build the live decrypt/claim context for a recipient from the staged packets. */
+  function claimContextFor(recipient: Recipient): ClaimContext | undefined {
+    if (tokenOpsResult?.airdropAddress) {
+      const packet = tokenOpsResult.claimPackets.find((item) => item.recipientId === recipient.id);
+      if (packet) return {
+        airdropAddress: (packet.airdropAddress ?? tokenOpsResult.airdropAddress) as Address,
+        encryptedInput: packet.encryptedInput,
+        signature: packet.signature
+      };
+    }
+    if (claimLinkContext?.recipient.toLowerCase() === recipient.address.toLowerCase()) {
+      return claimLinkContext.context;
+    }
+    return undefined;
+  }
 
   function pushToast(message: string, tone: ToastTone = "info") {
     const id = toastSeq.current++;
@@ -70,6 +101,77 @@ function App() {
     }
   }, [entered]);
 
+  // Parse claim URL params so copied delivery links work after reload.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const recipientAddr = params.get("recipient");
+    if (!recipientAddr || !isAddress(recipientAddr)) return;
+
+    const handle = params.get("handle");
+    const inputProof = params.get("proof") ?? params.get("inputProof");
+    const signature = params.get("sig") ?? params.get("signature");
+    const airdropAddress = params.get("airdrop") ?? params.get("airdropAddress");
+    const fullPacket =
+      isAddress(airdropAddress ?? "") &&
+      isHexString(handle) &&
+      isHexString(inputProof) &&
+      isHexString(signature) &&
+      signature.length >= 130;
+
+    const syntheticId = `claim-${recipientAddr.toLowerCase()}`;
+    const storedSession = loadClaimSession();
+    const sourceCampaign = storedSession?.campaign ?? campaign;
+    const existing = sourceCampaign.recipients.find((item) => item.address.toLowerCase() === recipientAddr.toLowerCase());
+
+    setEntered(true);
+    setActiveView("claim");
+    setSelectedRecipientId(existing?.id ?? syntheticId);
+
+    if (storedSession) {
+      setCampaign(sourceCampaign);
+      setTokenOpsResult(storedSession.tokenOpsResult);
+    } else if (!existing) {
+      setCampaign((current) => ({
+        ...current,
+        recipients: [
+          {
+            id: syntheticId,
+            address: recipientAddr,
+            label: "Claim link recipient",
+            amount: 0n,
+            encryptedHandle: handle ?? "claim-link",
+            claimed: false,
+            decrypted: false,
+            risk: "clear"
+          },
+          ...current.recipients
+        ]
+      }));
+    }
+
+    if (fullPacket) {
+      setClaimLinkContext({
+        recipient: recipientAddr,
+        context: {
+          airdropAddress: airdropAddress as Address,
+          encryptedInput: {
+            handle: handle as Hex,
+            inputProof: inputProof as Hex
+          },
+          signature: signature as Hex
+        }
+      });
+      pushToast(`Claim link loaded for ${existing?.label ?? compactAddress(recipientAddr)}.`, "private");
+    } else if (storedSession && existing) {
+      pushToast(`Claim link restored for ${existing.label}.`, "private");
+    } else {
+      pushToast("Claim link opened, but it does not contain a complete encrypted claim packet.", "warn");
+    }
+
+    window.history.replaceState({}, "", window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const selectedRecipient = campaign.recipients.find((recipient) => recipient.id === selectedRecipientId) ?? campaign.recipients[0];
   const total = campaignTotal(campaign);
   const claimed = campaign.recipients.filter((recipient) => recipient.claimed).length;
@@ -82,7 +184,7 @@ function App() {
         tokenSymbol: campaign.tokenSymbol,
         recipients: campaign.recipients
       }),
-    [campaign.name, campaign.tokenAddress, campaign.tokenSymbol, campaign.recipients]
+    [campaign.name, campaign.tokenAddress, campaign.tokenSymbol, campaign.recipients, tokenOps]
   );
 
   async function handleParseCsv() {
@@ -105,45 +207,83 @@ function App() {
 
   async function handleTokenOpsSync() {
     setBusyAction("tokenops");
-    const result = await tokenOps.createDistribution({
-      name: campaign.name,
-      tokenAddress: campaign.tokenAddress,
-      tokenSymbol: campaign.tokenSymbol,
-      recipients: campaign.recipients
-    });
-    setTokenOpsResult(result);
-    setCampaign((current) => ({
-      ...current,
-      tokenOpsOperator: result.operator as Address,
-      status: "live",
-      contractAddress: (result.airdropAddress ?? current.contractAddress) as Address,
-      txHash: result.txHash ?? `0x${result.encryptedBatchId.replace(/[^a-f0-9]/g, "").padEnd(64, "0").slice(0, 64)}`
-    }));
-    pushToast(`Private ${result.mode.replace("confidential-", "")} staged · ${result.claimPackets.length} claim packets.`, "success");
-    setBusyAction(null);
+    try {
+      const result = await tokenOps.createDistribution({
+        name: campaign.name,
+        tokenAddress: campaign.tokenAddress,
+        tokenSymbol: campaign.tokenSymbol,
+        recipients: campaign.recipients
+      });
+      const launchedCampaign: Campaign = {
+        ...campaign,
+        tokenOpsOperator: result.operator as Address,
+        status: "live",
+        contractAddress: (result.airdropAddress ?? campaign.contractAddress) as Address,
+        txHash: result.txHash ?? `0x${result.encryptedBatchId.replace(/[^a-f0-9]/g, "").padEnd(64, "0").slice(0, 64)}`
+      };
+      setTokenOpsResult(result);
+      setCampaign(launchedCampaign);
+      saveClaimSession(launchedCampaign, result);
+      const where = result.runtime === "live" ? "onchain on Sepolia" : "in demo preview";
+      pushToast(
+        `Private ${result.mode.replace("confidential-", "")} staged ${where} · ${result.claimPackets.length} claim packets.`,
+        "success"
+      );
+    } catch (error) {
+      pushToast(decodeError(error, "Staging was cancelled or failed."), "warn");
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   async function handleDecrypt(recipient: Recipient) {
     setBusyAction(`decrypt-${recipient.id}`);
-    const result = await zama.decryptAllocation(recipient.encryptedHandle, recipient);
-    setCampaign((current) => ({
-      ...current,
-      recipients: current.recipients.map((item) => (item.id === recipient.id ? { ...item, decrypted: true } : item))
-    }));
-    pushToast(`Decrypted for ${compactAddress(recipient.address)} · ${formatUnits(result.amount)} ${campaign.tokenSymbol}.`, "private");
-    setBusyAction(null);
+    try {
+      const amount = await runtime.revealAllocation(recipient, claimContextFor(recipient));
+      setCampaign((current) => ({
+        ...current,
+        recipients: current.recipients.map((item) =>
+          item.id === recipient.id ? { ...item, decrypted: true, amount } : item
+        )
+      }));
+      const suffix = runtime.runtime === "live" ? " · onchain" : "";
+      pushToast(
+        `Decrypted for ${compactAddress(recipient.address)} · ${formatUnits(amount)} ${campaign.tokenSymbol}${suffix}.`,
+        "private"
+      );
+    } catch (error) {
+      pushToast(decodeError(error, "Decryption was cancelled or failed."), "warn");
+    } finally {
+      setBusyAction(null);
+    }
   }
 
-  function handleClaim(recipient: Recipient) {
-    setCampaign((current) => ({
-      ...current,
-      recipients: current.recipients.map((item) => (item.id === recipient.id ? { ...item, claimed: true, decrypted: true } : item))
-    }));
-    pushToast(`${compactAddress(recipient.address)} claimed confidentially — public observers see nothing.`, "success");
+  async function handleClaim(recipient: Recipient) {
+    setBusyAction(`claim-${recipient.id}`);
+    try {
+      const hash = await runtime.submitClaim(claimContextFor(recipient));
+      setCampaign((current) => ({
+        ...current,
+        recipients: current.recipients.map((item) =>
+          item.id === recipient.id ? { ...item, claimed: true, decrypted: true } : item
+        ),
+        txHash: runtime.runtime === "live" ? hash : current.txHash
+      }));
+      if (runtime.runtime === "live") {
+        pushToast(`Claim submitted onchain · ${compactAddress(hash, 8)} — no plaintext amount is visible.`, "success");
+      } else {
+        pushToast(`${compactAddress(recipient.address)} claimed confidentially — public observers see nothing.`, "success");
+      }
+    } catch (error) {
+      pushToast(decodeError(error, "Claim was cancelled or failed."), "warn");
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   function handleWrapperSelect(wrapper: WrapperPair) {
     setSelectedWrapper(wrapper);
+    setTokenOpsResult(null);
     setCampaign((current) => ({
       ...current,
       tokenSymbol: wrapper.symbol,
@@ -155,9 +295,49 @@ function App() {
     pushToast(`${wrapper.symbol} selected from the official Zama Sepolia registry.`, "success");
   }
 
+  function handleNewCampaign() {
+    setTokenOpsResult(null);
+    setClaimLinkContext(null);
+    setCsvInput(csvTemplate);
+    setSelectedRecipientId("");
+    setCampaign({
+      ...initialCampaign,
+      id: `shielddrop-${Date.now().toString(16)}`,
+      name: "Untitled Private Distribution",
+      description: "Private token distribution prepared from a fresh recipient CSV.",
+      tokenSymbol: selectedWrapper.symbol,
+      tokenAddress: selectedWrapper.confidentialToken,
+      underlyingAddress: selectedWrapper.underlyingToken,
+      wrapperName: selectedWrapper.name,
+      status: "draft",
+      recipients: [],
+      contractAddress: undefined,
+      txHash: undefined
+    });
+    pushToast("New campaign draft started.", "info");
+  }
+
+  function handleModeChange(mode: TokenOpsMode) {
+    setDistributionMode(mode);
+    setTokenOpsResult(null);
+    pushToast(`${mode === "confidential-airdrop" ? "Airdrop" : "Disperse"} route selected.`, "info");
+  }
+
   function handleExport() {
     downloadText("shielddrop-audit.csv", buildAuditExport(campaign, tokenOpsReadiness, tokenOpsResult));
     pushToast("Audit export generated with public-safe metadata.", "success");
+  }
+
+  function handleDownloadTemplate() {
+    downloadText("shielddrop-template.csv", csvTemplate);
+    pushToast("CSV template downloaded — fill in wallet, label, and amount columns.", "info");
+  }
+
+  function handleCopyClaimLink(url: string, label: string) {
+    navigator.clipboard.writeText(url).then(
+      () => pushToast(`Claim link copied for ${label} — share privately.`, "private"),
+      () => pushToast("Clipboard access denied. Copy the link manually.", "warn")
+    );
   }
 
   if (!entered) {
@@ -174,11 +354,17 @@ function App() {
         busyAction={busyAction}
         tokenOpsReadiness={tokenOpsReadiness}
         tokenOpsResult={tokenOpsResult}
+        distributionMode={distributionMode}
         onCsvChange={setCsvInput}
         onParseCsv={handleParseCsv}
         onEncrypt={handleEncrypt}
         onTokenOpsSync={handleTokenOpsSync}
+        onDownloadTemplate={handleDownloadTemplate}
+        onCopyClaimLink={handleCopyClaimLink}
+        onNewCampaign={handleNewCampaign}
         onStatusChange={(status) => setCampaign((current) => ({ ...current, status }))}
+        onNameChange={(name) => setCampaign((current) => ({ ...current, name }))}
+        onModeChange={handleModeChange}
       />
     ),
     claim: (
@@ -186,6 +372,8 @@ function App() {
         campaign={campaign}
         recipient={selectedRecipient}
         busyAction={busyAction}
+        connectedAccount={runtime.account}
+        runtime={runtime.runtime}
         onRecipientSelect={setSelectedRecipientId}
         onDecrypt={handleDecrypt}
         onClaim={handleClaim}
@@ -242,6 +430,7 @@ function App() {
             <h1>{campaign.name}</h1>
           </div>
           <div className="topbar-actions">
+            <RuntimeBadge status={runtime.status} runtime={runtime.runtime} />
             <StatusBadge status={campaign.status} />
             <button className="icon-button" title="Refresh campaign" onClick={() => pushToast("Campaign state refreshed.", "info")}>
               <RefreshCw size={18} />
@@ -306,6 +495,92 @@ function StatusBadge({ status }: { status: CampaignStatus }) {
   );
 }
 
+function RuntimeBadge({ status, runtime }: { status: RuntimeStatus; runtime: "demo" | "live" }) {
+  const label =
+    status === "live"
+      ? "Live · Sepolia"
+      : status === "initializing"
+        ? "Starting relayer"
+        : status === "error"
+          ? "Demo · relayer offline"
+          : "Demo data";
+  const tone = runtime === "live" ? "live" : status === "initializing" ? "init" : status === "error" ? "warn" : "demo";
+  const title =
+    runtime === "live"
+      ? "Connected to Sepolia with the Zama FHE relayer — actions are real onchain transactions."
+      : "Connect a Sepolia wallet to run the real confidential airdrop path. Until then, the app shows demo data.";
+  return (
+    <span className={`runtime-badge runtime-badge-${tone}`} title={title}>
+      {status === "initializing" ? <Spinner size={12} /> : <span className="runtime-badge-dot" />}
+      {label}
+    </span>
+  );
+}
+
+/** Turn a thrown wallet/SDK error into a short, human toast message. */
+function decodeError(error: unknown, fallback: string): string {
+  if (error && typeof error === "object") {
+    const maybe = error as { shortMessage?: unknown; message?: unknown };
+    const raw = typeof maybe.shortMessage === "string" ? maybe.shortMessage : typeof maybe.message === "string" ? maybe.message : "";
+    if (/user rejected|denied|rejected the request/i.test(raw)) return "Signature request rejected.";
+    if (/InvalidStartTime|start time/i.test(raw)) {
+      return "Airdrop start time expired before the transaction landed. Retry staging with the refreshed buffer.";
+    }
+    if (/SenderNotAllowed|not allowed|operator/i.test(raw)) {
+      return "Token funding was not authorized. Approve the TokenOps operator prompt, then retry staging.";
+    }
+    if (/insufficient|balance/i.test(raw)) {
+      return "Wallet does not have enough Sepolia ETH or confidential token balance for this distribution.";
+    }
+    if (raw && raw.length <= 140) return raw;
+  }
+  return fallback;
+}
+
+function isHexString(value: string | null): value is Hex {
+  return Boolean(value && /^0x[a-fA-F0-9]*$/.test(value));
+}
+
+function saveClaimSession(campaign: Campaign, tokenOpsResult: TokenOpsDistributionResult) {
+  try {
+    const storedCampaign: StoredCampaign = {
+      ...campaign,
+      recipients: campaign.recipients.map((recipient) => ({
+        ...recipient,
+        amount: recipient.amount.toString()
+      }))
+    };
+    const session: StoredClaimSession = {
+      campaign: storedCampaign,
+      tokenOpsResult,
+      savedAt: new Date().toISOString()
+    };
+    window.localStorage.setItem(CLAIM_SESSION_STORAGE_KEY, JSON.stringify(session));
+  } catch {
+    // Claim links still carry the encrypted packet for live claims.
+  }
+}
+
+function loadClaimSession(): { campaign: Campaign; tokenOpsResult: TokenOpsDistributionResult } | null {
+  try {
+    const raw = window.localStorage.getItem(CLAIM_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredClaimSession;
+    return {
+      campaign: {
+        ...parsed.campaign,
+        recipients: parsed.campaign.recipients.map((recipient) => ({
+          ...recipient,
+          amount: BigInt(recipient.amount)
+        }))
+      },
+      tokenOpsResult: parsed.tokenOpsResult
+    };
+  } catch {
+    return null;
+  }
+}
+
 function CommandCenter({
   campaign,
   selectedWrapper,
@@ -314,11 +589,17 @@ function CommandCenter({
   busyAction,
   tokenOpsReadiness,
   tokenOpsResult,
+  distributionMode,
   onCsvChange,
   onParseCsv,
   onEncrypt,
   onTokenOpsSync,
-  onStatusChange
+  onDownloadTemplate,
+  onCopyClaimLink,
+  onNewCampaign,
+  onStatusChange,
+  onNameChange,
+  onModeChange
 }: {
   campaign: Campaign;
   selectedWrapper: WrapperPair;
@@ -327,11 +608,17 @@ function CommandCenter({
   busyAction: string | null;
   tokenOpsReadiness: TokenOpsReadiness;
   tokenOpsResult: TokenOpsDistributionResult | null;
+  distributionMode: TokenOpsMode;
   onCsvChange: (value: string) => void;
   onParseCsv: () => void;
   onEncrypt: () => void;
   onTokenOpsSync: () => void;
+  onDownloadTemplate: () => void;
+  onCopyClaimLink: (url: string, label: string) => void;
+  onNewCampaign: () => void;
   onStatusChange: (status: CampaignStatus) => void;
+  onNameChange: (name: string) => void;
+  onModeChange: (mode: TokenOpsMode) => void;
 }) {
   const total = campaignTotal(campaign);
 
@@ -343,7 +630,7 @@ function CommandCenter({
             <span className="panel-kicker">Creator workflow</span>
             <h2>Distribution command center</h2>
           </div>
-          <button className="secondary-button">
+          <button className="secondary-button" onClick={onNewCampaign}>
             <Plus size={17} />
             New campaign
           </button>
@@ -385,7 +672,7 @@ function CommandCenter({
         <div className="form-grid">
           <label>
             Campaign name
-            <input value={campaign.name} readOnly />
+            <input value={campaign.name} onChange={(e) => onNameChange(e.target.value)} placeholder="My private distribution" />
           </label>
           <label>
             Claim window
@@ -402,6 +689,23 @@ function CommandCenter({
             Launch operator
             <input value={compactAddress(campaign.tokenOpsOperator)} readOnly />
           </label>
+        </div>
+
+        <div className="mode-toggle">
+          <button
+            className={`mode-toggle-btn ${distributionMode === "confidential-airdrop" ? "active" : ""}`}
+            onClick={() => onModeChange("confidential-airdrop")}
+          >
+            <Send size={15} />
+            Airdrop
+          </button>
+          <button
+            className={`mode-toggle-btn ${distributionMode === "confidential-disperse" ? "active" : ""}`}
+            onClick={() => onModeChange("confidential-disperse")}
+          >
+            <Network size={15} />
+            Disperse
+          </button>
         </div>
 
         <TokenOpsPreflight readiness={tokenOpsReadiness} />
@@ -432,19 +736,26 @@ function CommandCenter({
             <Lock size={13} /> {formatUnits(total)} {campaign.tokenSymbol}
           </span>
         </div>
+        <div className="csv-toolbar">
+          <button className="ghost-button" onClick={onDownloadTemplate}>
+            <Download size={15} />
+            Download template
+          </button>
+        </div>
         <textarea className="csv-box" value={csvInput} onChange={(event) => onCsvChange(event.target.value)} spellCheck={false} />
         <div className="action-row">
           <button className="secondary-button" onClick={onParseCsv}>
             <Upload size={17} />
             Validate CSV
           </button>
-          <button className="secondary-button">
-            <KeyRound size={17} />
-            Generate handles
+          <button className="secondary-button" onClick={onEncrypt} disabled={busyAction === "encrypt" || campaign.recipients.length === 0}>
+            {busyAction === "encrypt" ? <Spinner /> : <KeyRound size={17} />}
+            {busyAction === "encrypt" ? "Encrypting" : "Encrypt allocations"}
           </button>
         </div>
         <RecipientTable campaign={campaign} compact />
-        <ClaimPacketPreview result={tokenOpsResult} />
+        <BatchClaimProgress campaign={campaign} />
+        <ClaimPacketPreview result={tokenOpsResult} onCopyLink={onCopyClaimLink} />
       </section>
     </div>
   );
@@ -475,7 +786,7 @@ function TokenOpsPreflight({ readiness }: { readiness: TokenOpsReadiness }) {
   );
 }
 
-function ClaimPacketPreview({ result }: { result: TokenOpsDistributionResult | null }) {
+function ClaimPacketPreview({ result, onCopyLink }: { result: TokenOpsDistributionResult | null; onCopyLink: (url: string, label: string) => void }) {
   if (!result) {
     return (
       <div className="claim-packet-empty">
@@ -492,19 +803,51 @@ function ClaimPacketPreview({ result }: { result: TokenOpsDistributionResult | n
         <span className="mini-badge">{result.claimPackets.length} packets</span>
       </div>
       <div className="packet-list">
-        {result.claimPackets.slice(0, 3).map((packet) => (
+        {result.claimPackets.map((packet) => (
           <div className="packet-row" key={packet.recipientId}>
             <div>
               <strong>{packet.label}</strong>
               <span className="mono">{compactAddress(packet.recipient)}</span>
             </div>
-            <span className="mono">{packet.encryptedInput.handle.slice(0, 18)}...</span>
+            <button
+              className="ghost-button packet-copy-btn"
+              onClick={() => onCopyLink(packet.deliveryUrl, packet.label)}
+              title="Copy claim link"
+            >
+              <Copy size={14} />
+              Copy link
+            </button>
           </div>
         ))}
       </div>
       <p className="muted-note">
-        Packets contain the TokenOps encrypted input, EIP-712 admin signature, and private claim URL.
+        Share each link privately with its recipient. The URL contains only the encrypted handle — no plaintext amount is visible.
       </p>
+    </div>
+  );
+}
+
+function BatchClaimProgress({ campaign }: { campaign: Campaign }) {
+  const total = campaign.recipients.length;
+  if (total === 0) return null;
+
+  const claimed = campaign.recipients.filter((r) => r.claimed).length;
+  const decrypted = campaign.recipients.filter((r) => r.decrypted).length;
+  const rate = Math.round((claimed / total) * 100);
+
+  return (
+    <div className="batch-progress">
+      <div className="batch-progress-head">
+        <span className="panel-kicker">Claim progress</span>
+        <span className="mono">{claimed}/{total} claimed</span>
+      </div>
+      <div className="progress-bar">
+        <span style={{ width: `${rate}%` }} />
+      </div>
+      <div className="batch-progress-stats">
+        <span>{decrypted} decrypted</span>
+        <span>{total - claimed} pending</span>
+      </div>
     </div>
   );
 }
@@ -578,6 +921,8 @@ function ClaimDesk({
   campaign,
   recipient,
   busyAction,
+  connectedAccount,
+  runtime,
   onRecipientSelect,
   onDecrypt,
   onClaim
@@ -585,21 +930,66 @@ function ClaimDesk({
   campaign: Campaign;
   recipient: Recipient;
   busyAction: string | null;
+  connectedAccount?: Address;
+  runtime: "demo" | "live";
   onRecipientSelect: (id: string) => void;
   onDecrypt: (recipient: Recipient) => void;
   onClaim: (recipient: Recipient) => void;
 }) {
+  // When a wallet is connected, the recipient is locked to that address —
+  // nobody can view another person's allocation. Without a wallet the demo
+  // stays explorable via the dropdown.
+  const matched = connectedAccount
+    ? campaign.recipients.find((item) => item.address.toLowerCase() === connectedAccount.toLowerCase())
+    : recipient;
+  const gated = Boolean(connectedAccount);
+  const active = matched ?? recipient;
+
   const steps = useMemo(
     () => [
-      { id: "connect", label: "Wallet connected", status: "done" },
-      { id: "verify", label: "Eligibility verified", status: recipient ? "done" : "pending" },
-      { id: "decrypt", label: "EIP-712 decrypt", status: recipient?.decrypted ? "done" : "active" },
-      { id: "claim", label: "Confidential claim", status: recipient?.claimed ? "done" : recipient?.decrypted ? "active" : "pending" }
+      { id: "connect", label: connectedAccount ? "Wallet connected" : "Connect wallet", status: connectedAccount ? "done" : "active" },
+      { id: "verify", label: "Eligibility verified", status: matched ? "done" : gated ? "pending" : "done" },
+      { id: "decrypt", label: "EIP-712 decrypt", status: active?.decrypted ? "done" : "active" },
+      { id: "claim", label: "Confidential claim", status: active?.claimed ? "done" : active?.decrypted ? "active" : "pending" }
     ],
-    [recipient]
+    [active, matched, gated, connectedAccount]
   );
 
-  const decrypting = busyAction === `decrypt-${recipient?.id}`;
+  const decrypting = busyAction === `decrypt-${active?.id}`;
+  const claiming = busyAction === `claim-${active?.id}`;
+
+  if (gated && !matched) {
+    return (
+      <div className="two-column claim-layout">
+        <section className="panel claim-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="panel-kicker">Recipient experience</span>
+              <h2>Claim confidential allocation</h2>
+            </div>
+          </div>
+          <div className="empty-state">
+            <Lock size={22} />
+            <strong>No allocation for {compactAddress(connectedAccount!)}</strong>
+            <span>This wallet is not a recipient in this campaign. Only eligible wallets can decrypt an allocation.</span>
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <span className="panel-kicker">Public-safe status</span>
+              <h2>Campaign progress</h2>
+            </div>
+            <span className="mini-badge">{claimRate(campaign)}%</span>
+          </div>
+          <div className="progress-bar">
+            <span style={{ width: `${claimRate(campaign)}%` }} />
+          </div>
+          <p className="muted-note">Observers see only the claim rate and event trail — never the encrypted amounts.</p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="two-column claim-layout">
@@ -609,26 +999,32 @@ function ClaimDesk({
             <span className="panel-kicker">Recipient experience</span>
             <h2>Claim confidential allocation</h2>
           </div>
-          <div className="select-wrap">
-            <select value={recipient?.id} onChange={(event) => onRecipientSelect(event.target.value)}>
-              {campaign.recipients.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={16} />
-          </div>
+          {gated ? (
+            <span className="mini-badge">
+              <Wallet size={13} /> {compactAddress(connectedAccount!)}
+            </span>
+          ) : (
+            <div className="select-wrap">
+              <select value={active?.id} onChange={(event) => onRecipientSelect(event.target.value)}>
+                {campaign.recipients.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={16} />
+            </div>
+          )}
         </div>
 
-        <div className={`claim-amount ${recipient?.decrypted ? "is-open" : "is-locked"} ${decrypting ? "is-working" : ""}`}>
+        <div className={`claim-amount ${active?.decrypted ? "is-open" : "is-locked"} ${decrypting ? "is-working" : ""}`}>
           <span className="claim-amount-label">
             <Eye size={14} /> Private allocation · only you can see this
           </span>
           <strong>
-            <EncryptedValue revealed={!!recipient?.decrypted} amount={recipient?.amount ?? 0n} symbol={campaign.tokenSymbol} size="hero" />
+            <EncryptedValue revealed={!!active?.decrypted} amount={active?.amount ?? 0n} symbol={campaign.tokenSymbol} size="hero" />
           </strong>
-          <small className="mono">{recipient?.encryptedHandle}</small>
+          <small className="mono">{active?.encryptedHandle}</small>
         </div>
 
         <div className="claim-steps">
@@ -641,13 +1037,17 @@ function ClaimDesk({
         </div>
 
         <div className="action-row">
-          <button className="secondary-button" onClick={() => onDecrypt(recipient)} disabled={!recipient || recipient.decrypted || decrypting}>
+          <button className="secondary-button" onClick={() => onDecrypt(active)} disabled={!active || active.decrypted || decrypting}>
             {decrypting ? <Spinner /> : <Eye size={17} />}
-            {decrypting ? "Decrypting" : recipient?.decrypted ? "Decrypted" : "Decrypt"}
+            {decrypting ? "Decrypting" : active?.decrypted ? "Decrypted" : runtime === "live" ? "Decrypt onchain" : "Decrypt"}
           </button>
-          <button className="primary-button" onClick={() => onClaim(recipient)} disabled={!recipient || recipient.claimed || !recipient.decrypted}>
-            <Send size={17} />
-            {recipient?.claimed ? "Claimed" : "Claim"}
+          <button
+            className="primary-button"
+            onClick={() => onClaim(active)}
+            disabled={!active || active.claimed || !active.decrypted || claiming}
+          >
+            {claiming ? <Spinner /> : <Send size={17} />}
+            {active?.claimed ? "Claimed" : claiming ? "Claiming" : "Claim"}
           </button>
         </div>
       </section>

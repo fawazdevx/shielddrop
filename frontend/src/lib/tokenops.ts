@@ -6,6 +6,7 @@ import {
   createConfidentialAirdropClient,
   createConfidentialAirdropFactoryClient,
   encryptUint64,
+  erc7984OperatorAbi,
   signClaimAuthorization,
   type Encryptor,
   type EncryptedInput
@@ -48,6 +49,7 @@ export type TokenOpsClaimPacket = {
   recipient: string;
   encryptedInput: EncryptedInput;
   signature: Hex;
+  airdropAddress?: string;
   deliveryUrl: string;
   status: "ready" | "needs-review";
 };
@@ -86,6 +88,9 @@ const TOKENOPS_CHAIN_ID = ZAMA_SEPOLIA.chainId;
 const AIRDROP_FACTORY = getFheAirdropFactoryAddress(TOKENOPS_CHAIN_ID);
 const DISPERSE_SINGLETON = getFheDisperseSingletonAddress(TOKENOPS_CHAIN_ID);
 const SDK_VERSION = packageJson.dependencies["@tokenops/sdk"].replace(/^[^\d]*/, "");
+const AIRDROP_START_DELAY_SECONDS = 2 * 60;
+const AIRDROP_DURATION_SECONDS = 30 * 86400;
+const OPERATOR_DEADLINE_SECONDS = 24 * 60 * 60;
 
 export const tokenOpsSdkEvidence = {
   package: "@tokenops/sdk",
@@ -139,6 +144,11 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
           runtime === "live"
             ? "Wallet and encryption services are connected"
             : "Connect a wallet to move from preview to live launch"
+      },
+      {
+        label: "Sepolia start buffer",
+        ok: true,
+        detail: "Airdrops start a few minutes after staging to avoid stale timestamp reverts"
       }
     ];
     const blockers = items.filter((item) => !item.ok && item.label !== "Execution clients").map((item) => item.label);
@@ -157,24 +167,30 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
 
   async createDistribution(draft: TokenOpsCampaignDraft): Promise<TokenOpsDistributionResult> {
     const readiness = this.getReadiness(draft);
+    const mode = this.config.mode ?? "confidential-airdrop";
     if (readiness.runtime === "live") {
-      return this.createLiveAirdrop(draft, readiness);
+      return mode === "confidential-disperse"
+        ? this.createLiveDisperse(draft, readiness)
+        : this.createLiveAirdrop(draft, readiness);
     }
 
     await wait(500);
     const campaignId = `tokenops-${draft.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-    const claimPackets = buildDemoClaimPackets(draft, this.config.baseClaimUrl);
+    const airdropAddress = fakeHex(`${campaignId}:airdrop`, 20);
+    const claimPackets = buildDemoClaimPackets(draft, this.config.baseClaimUrl, airdropAddress);
 
     return {
       campaignId,
-      operator: AIRDROP_FACTORY ?? "0x742d35Cc6634C0532925a3b8D8d8E4C9B4c5D2B1",
-      encryptedBatchId: `tokenops-airdrop-${draft.recipients.length}-${Date.now().toString(16)}`,
-      mode: "confidential-airdrop",
+      operator: mode === "confidential-disperse"
+        ? (DISPERSE_SINGLETON ?? "0x742d35Cc6634C0532925a3b8D8d8E4C9B4c5D2B1")
+        : (AIRDROP_FACTORY ?? "0x742d35Cc6634C0532925a3b8D8d8E4C9B4c5D2B1"),
+      encryptedBatchId: `tokenops-${mode === "confidential-disperse" ? "disperse" : "airdrop"}-${draft.recipients.length}-${Date.now().toString(16)}`,
+      mode,
       sdkVersion: SDK_VERSION,
       runtime: "demo",
       airdropFactory: AIRDROP_FACTORY ?? "unresolved",
       disperseSingleton: DISPERSE_SINGLETON ?? "unresolved",
-      airdropAddress: fakeHex(`${campaignId}:airdrop`, 20),
+      airdropAddress,
       txHash: fakeHex(`${campaignId}:stage:${Date.now()}`, 32),
       claimPackets,
       readiness
@@ -205,21 +221,57 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
     }
 
     const factory = createConfidentialAirdropFactoryClient({ publicClient, walletClient, encryptor });
-    const now = Math.floor(Date.now() / 1000);
     const userSalt = fakeHex(`${draft.name}:${admin}:${Date.now()}`, 32);
-    const { hash, airdrop } = await factory.createConfidentialAirdrop({
+
+    const clearRecipients = draft.recipients.filter((item) => item.risk === "clear");
+    const fundingTotal = clearRecipients.reduce((sum, item) => sum + item.amount, 0n);
+    if (fundingTotal <= 0n) {
+      throw new Error("Add at least one positive recipient allocation before staging privately.");
+    }
+
+    // Fund the clone in the same tx so recipients can actually claim tokens.
+    // Prerequisite: the factory must be an operator on the confidential token.
+    const factoryIsOperator = await publicClient.readContract({
+      address: draft.tokenAddress as ViemAddress,
+      abi: erc7984OperatorAbi,
+      functionName: "isOperator",
+      args: [admin, AIRDROP_FACTORY as ViemAddress]
+    });
+    if (!factoryIsOperator) {
+      const operatorDeadline = Math.floor(Date.now() / 1000) + OPERATOR_DEADLINE_SECONDS;
+      const setOperatorHash = await walletClient.writeContract({
+        account: admin,
+        chain: walletClient.chain,
+        address: draft.tokenAddress as ViemAddress,
+        abi: erc7984OperatorAbi,
+        functionName: "setOperator",
+        args: [AIRDROP_FACTORY as ViemAddress, operatorDeadline]
+      });
+      await publicClient.waitForTransactionReceipt({ hash: setOperatorHash });
+    }
+
+    const fundingInput = await encryptUint64({
+      encryptor,
+      contractAddress: AIRDROP_FACTORY as ViemAddress,
+      userAddress: admin,
+      value: fundingTotal
+    });
+    const { startTimestamp, endTimestamp } = await safeAirdropWindow(publicClient);
+
+    const { hash, airdrop } = await factory.createAndFundConfidentialAirdrop({
       params: {
         token: draft.tokenAddress as ViemAddress,
-        startTimestamp: now + 60,
-        endTimestamp: now + 30 * 86400,
+        startTimestamp,
+        endTimestamp,
         canExtendClaimWindow: false,
         admin
       },
-      userSalt
+      userSalt,
+      encryptedInput: fundingInput
     });
 
     const claimPackets: TokenOpsClaimPacket[] = [];
-    for (const recipient of draft.recipients.filter((item) => item.risk === "clear")) {
+    for (const recipient of clearRecipients) {
       const encryptedInput = await encryptUint64({
         encryptor,
         contractAddress: airdrop,
@@ -232,7 +284,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
         recipient: recipient.address as ViemAddress,
         encryptedAmountHandle: encryptedInput.handle
       });
-      claimPackets.push(toClaimPacket(recipient, encryptedInput, signature, this.config.baseClaimUrl));
+      claimPackets.push(toClaimPacket(recipient, encryptedInput, signature, this.config.baseClaimUrl, airdrop));
     }
 
     return {
@@ -250,6 +302,58 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
       readiness
     };
   }
+
+  private async createLiveDisperse(
+    draft: TokenOpsCampaignDraft,
+    readiness: TokenOpsReadiness
+  ): Promise<TokenOpsDistributionResult> {
+    const { publicClient, walletClient, encryptor } = this.config;
+    if (!publicClient || !walletClient || !encryptor) {
+      throw new Error("TokenOps live mode requires publicClient, walletClient, and encryptor.");
+    }
+
+    const admin = this.config.account ?? walletClient.account?.address;
+    if (!admin) {
+      throw new Error("TokenOps live mode requires a connected wallet account.");
+    }
+
+    const disperse = createConfidentialDisperseClient({ publicClient, walletClient, encryptor });
+    const clearRecipients = draft.recipients.filter((item) => item.risk === "clear");
+
+    // The SDK encrypts amounts internally — pass plaintext addresses + amounts.
+    const addresses = clearRecipients.map((r) => r.address as ViemAddress);
+    const amounts = clearRecipients.map((r) => r.amount);
+
+    const result = await disperse.disperse({
+      token: draft.tokenAddress as ViemAddress,
+      recipients: addresses,
+      amounts,
+      mode: tokenOpsModeToDisperseMode("confidential-disperse")
+    });
+
+    // Build claim packets with deterministic handles for delivery URLs.
+    const claimPackets: TokenOpsClaimPacket[] = clearRecipients.map((recipient) => {
+      const encryptedInput = {
+        handle: fakeHex(`${draft.name}:${recipient.address}:disperse-handle`, 32),
+        inputProof: fakeHex(`${draft.name}:${recipient.address}:disperse-proof`, 96)
+      } satisfies EncryptedInput;
+      return toClaimPacket(recipient, encryptedInput, "0x" as Hex, this.config.baseClaimUrl);
+    });
+
+    return {
+      campaignId: `tokenops-${draft.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      operator: readiness.disperseSingleton,
+      encryptedBatchId: `tokenops-disperse-${claimPackets.length}-${result.hash.slice(2, 10)}`,
+      mode: "confidential-disperse",
+      sdkVersion: SDK_VERSION,
+      runtime: "live",
+      airdropFactory: readiness.airdropFactory,
+      disperseSingleton: readiness.disperseSingleton,
+      txHash: result.hash,
+      claimPackets,
+      readiness
+    };
+  }
 }
 
 export function createTokenOpsAdapter(): TokenOpsAdapter {
@@ -260,7 +364,16 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function buildDemoClaimPackets(draft: TokenOpsCampaignDraft, baseClaimUrl?: string) {
+async function safeAirdropWindow(publicClient: PublicClient) {
+  const latestBlock = await publicClient.getBlock();
+  const chainNow = Number(latestBlock.timestamp);
+  const wallNow = Math.floor(Date.now() / 1000);
+  const startTimestamp = Math.max(chainNow, wallNow) + AIRDROP_START_DELAY_SECONDS;
+  const endTimestamp = startTimestamp + AIRDROP_DURATION_SECONDS;
+  return { startTimestamp, endTimestamp };
+}
+
+function buildDemoClaimPackets(draft: TokenOpsCampaignDraft, baseClaimUrl?: string, airdropAddress?: string) {
   return draft.recipients
     .filter((recipient) => recipient.risk === "clear")
     .map((recipient) => {
@@ -272,7 +385,8 @@ function buildDemoClaimPackets(draft: TokenOpsCampaignDraft, baseClaimUrl?: stri
         recipient,
         encryptedInput,
         fakeHex(`${draft.name}:${recipient.address}:signature`, 65),
-        baseClaimUrl
+        baseClaimUrl,
+        airdropAddress
       );
     });
 }
@@ -281,13 +395,16 @@ function toClaimPacket(
   recipient: Recipient,
   encryptedInput: EncryptedInput,
   signature: Hex,
-  baseClaimUrl = window.location.origin
+  baseClaimUrl = window.location.origin,
+  airdropAddress?: string
 ): TokenOpsClaimPacket {
   const claimParams = new URLSearchParams({
     recipient: recipient.address,
     handle: encryptedInput.handle,
-    sig: signature.slice(0, 18)
+    proof: encryptedInput.inputProof,
+    sig: signature
   });
+  if (airdropAddress) claimParams.set("airdrop", airdropAddress);
 
   return {
     recipientId: recipient.id,
@@ -295,6 +412,7 @@ function toClaimPacket(
     recipient: recipient.address,
     encryptedInput,
     signature,
+    airdropAddress,
     deliveryUrl: `${baseClaimUrl}/claim?${claimParams.toString()}`,
     status: recipient.risk === "clear" ? "ready" : "needs-review"
   };

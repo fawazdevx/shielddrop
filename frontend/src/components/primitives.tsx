@@ -1,7 +1,7 @@
 import { AlertCircle, Check, Info, Loader2, Lock, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-export type ToastTone = "info" | "success" | "private";
+export type ToastTone = "info" | "success" | "private" | "warn";
 export type Toast = { id: number; message: string; tone: ToastTone };
 
 /** Animate a number from 0 -> target with an ease-out curve whenever `active` flips on. */
@@ -74,7 +74,8 @@ export function Spinner({ size = 17 }: { size?: number }) {
 const toastIcon: Record<ToastTone, typeof Info> = {
   info: Info,
   success: Check,
-  private: Lock
+  private: Lock,
+  warn: AlertCircle
 };
 
 export function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {

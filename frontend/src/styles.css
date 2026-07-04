@@ -133,6 +133,10 @@ a {
   0% { text-shadow: 0 0 22px var(--glow); }
   100% { text-shadow: 0 0 0 transparent; }
 }
+@keyframes success-flash {
+  0% { background: rgba(52, 211, 153, 0.25); box-shadow: 0 0 24px rgba(52, 211, 153, 0.3); }
+  100% { background: transparent; box-shadow: none; }
+}
 
 .reveal-up { animation: reveal-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
 .view-fade { animation: view-fade 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
@@ -949,7 +953,85 @@ select option {
   font-family: var(--mono);
 }
 
+/* Mode toggle */
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 18px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.mode-toggle-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.18s ease;
+}
+.mode-toggle-btn:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.mode-toggle-btn.active {
+  color: #fff;
+  background: var(--grad-primary);
+  border-color: transparent;
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.35);
+}
+.mode-toggle-btn.active svg {
+  color: #fff;
+}
+
 /* TokenOps proof panels */
+.csv-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.csv-toolbar .ghost-button {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  gap: 6px;
+}
+
+/* Batch claim progress */
+.batch-progress {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.batch-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.batch-progress-head .mono {
+  color: var(--primary-bright);
+  font-size: 12px;
+}
+.batch-progress-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .tokenops-card,
 .claim-packet-panel,
 .claim-packet-empty {
@@ -1042,13 +1124,19 @@ select option {
 }
 .packet-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 10px;
   background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
+}
+.packet-copy-btn {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  gap: 5px;
 }
 
 /* ===================== Encrypted value ===================== */
@@ -1181,6 +1269,9 @@ tbody tr:last-child td {
 }
 .row-status.claimed { color: var(--ok); background: var(--ok-bg); }
 .row-status.duplicate, .row-status.invalid { color: var(--danger); background: var(--danger-bg); }
+tbody tr.just-claimed {
+  animation: success-flash 1.2s ease-out;
+}
 
 /* Claim desk */
 .claim-layout {

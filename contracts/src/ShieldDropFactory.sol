@@ -26,6 +26,7 @@ contract ShieldDropFactory {
     error InvalidRegistry();
     error AlreadyInitialized();
     error NotOwner();
+    error InvalidOwner();
     error InvalidImplementation();
     error UpgradeCallFailed();
     error UnsupportedImplementation();
@@ -112,7 +113,7 @@ contract ShieldDropFactory {
     function _initialize(address registry_, address owner_) private {
         if (initialized) revert AlreadyInitialized();
         if (registry_ == address(0)) revert InvalidRegistry();
-        if (owner_ == address(0)) revert NotOwner();
+        if (owner_ == address(0)) revert InvalidOwner();
 
         initialized = true;
         registry = IWrapperRegistry(registry_);

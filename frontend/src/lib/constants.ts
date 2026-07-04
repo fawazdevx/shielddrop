@@ -12,6 +12,9 @@ export const wrapperPairs: WrapperPair[] = ZAMA_SEPOLIA.wrappers.map((wrapper) =
 export const defaultCreator = "0x8f12BfE824aD9A72F64F5A6F51d8f27D1f0D4b91";
 export const defaultTokenOpsOperator = "0x742d35Cc6634C0532925a3b8D8d8E4C9B4c5D2B1";
 
+export const csvTemplate = `wallet,label,amount
+0xYOUR_WALLET_ADDRESS,Recipient name,1000`;
+
 export const sampleCsv = `wallet,label,amount
 0x5B38Da6a701c568545dCfcB03FcB875f56beddC4,Core contributor,12500
 0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2,Design partner,8400
