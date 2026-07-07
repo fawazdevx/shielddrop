@@ -1,26 +1,11 @@
 import {
-  AlertCircle,
-  ArrowRight,
   BadgeCheck,
-  Check,
-  ChevronDown,
   ClipboardCheck,
-  Copy,
-  Download,
-  Eye,
-  FileLock2,
   KeyRound,
   Lock,
   Network,
-  Pause,
-  Play,
-  Plus,
   RefreshCw,
-  Search,
-  Send,
-  Shield,
   ShieldCheck,
-  Upload,
   Wallet,
   WalletCards
 } from "lucide-react";
@@ -28,7 +13,18 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Hex } from "viem";
 import { Landing } from "./components/Landing";
-import { EncryptedValue, Spinner, ToastStack, type Toast, type ToastTone } from "./components/primitives";
+import {
+  IconButton,
+  Spinner,
+  Stat,
+  StatusBadge as ToneBadge,
+  Surface,
+  ToastStack,
+  cn,
+  type StatusTone,
+  type Toast,
+  type ToastTone
+} from "./components/ui";
 import { auditTrail, csvTemplate, initialCampaign, metrics, sampleCsv, wrapperPairs, ZERO_ADDRESS } from "./lib/constants";
 import { buildAuditExport, campaignTotal, claimRate, compactAddress, downloadText, formatUnits, isAddress, parseRecipientsCsv } from "./lib/format";
 import {
@@ -39,6 +35,10 @@ import {
 import type { Address, Campaign, CampaignStatus, Recipient, WrapperPair } from "./lib/types";
 import { useDistributionRuntime, type ClaimContext, type RuntimeStatus } from "./lib/useDistributionRuntime";
 import { createZamaClient } from "./lib/zama";
+import { CommandCenter } from "./views/CommandCenter";
+import { ClaimDesk } from "./views/ClaimDesk";
+import { RegistryDesk } from "./views/RegistryDesk";
+import { AuditDesk } from "./views/AuditDesk";
 
 const zama = createZamaClient();
 const CLAIM_SESSION_STORAGE_KEY = "shielddrop:last-claim-session";
@@ -384,114 +384,161 @@ function App() {
   }[activeView];
 
   return (
-    <main className="app-shell">
-      <div className="grid-bg fixed" aria-hidden="true" />
-      <div className="app-glow" aria-hidden="true" />
-      <aside className="sidebar">
-        <button className="brand brand-button" onClick={() => setEntered(false)} title="Back to landing">
-          <span className="brand-mark">
-            <ShieldCheck size={22} />
-          </span>
-          <div>
-            <strong>ShieldDrop</strong>
-            <span className="mono">confidential.distribution.os</span>
-          </div>
-        </button>
+    <Surface>
+      <div className="mx-auto flex min-h-screen max-w-[1500px]">
+        {/* ---------------- sidebar ---------------- */}
+        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col gap-6 border-r border-hairline bg-obsidian-2/40 px-4 py-6 md:flex">
+          <button
+            onClick={() => setEntered(false)}
+            title="Back to landing"
+            className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-hairline bg-elevated/70 text-purple-bright">
+              <ShieldCheck size={22} />
+            </span>
+            <span className="leading-tight">
+              <strong className="block text-[15px] font-semibold text-ink">ShieldDrop</strong>
+              <span className="font-mono text-[10.5px] text-ink-faint">confidential.distribution.os</span>
+            </span>
+          </button>
 
-        <nav className="nav-list" aria-label="Primary">
-          <NavButton icon={Network} label="Command" active={activeView === "command"} onClick={() => setActiveView("command")} />
-          <NavButton icon={Wallet} label="Claim Desk" active={activeView === "claim"} onClick={() => setActiveView("claim")} />
-          <NavButton icon={WalletCards} label="Registry" active={activeView === "registry"} onClick={() => setActiveView("registry")} />
-          <NavButton icon={ClipboardCheck} label="Audit" active={activeView === "audit"} onClick={() => setActiveView("audit")} />
-        </nav>
+          <nav className="grid gap-1" aria-label="Primary">
+            {NAV.map((item) => (
+              <NavButton
+                key={item.id}
+                icon={item.icon}
+                label={item.label}
+                active={activeView === item.id}
+                onClick={() => setActiveView(item.id)}
+              />
+            ))}
+          </nav>
 
-        <div className="sidebar-panel">
-          <span className="panel-kicker">Privacy guarantee</span>
-          <p className="sidebar-blurb">Amounts stay encrypted onchain. Only the recipient can decrypt their allocation.</p>
-          <div className="fit-row">
-            <Lock size={15} />
-            <span>FHEVM encrypted ledger</span>
-          </div>
-          <div className="fit-row">
-            <KeyRound size={15} />
-            <span>EIP-712 user decryption</span>
-          </div>
-          <div className="fit-row">
-            <BadgeCheck size={15} />
-            <span>Sepolia registry-first</span>
-          </div>
-        </div>
-      </aside>
-
-      <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Private payouts, grants, airdrops & unlocks</p>
-            <h1>{campaign.name}</h1>
-          </div>
-          <div className="topbar-actions">
-            <RuntimeBadge status={runtime.status} runtime={runtime.runtime} />
-            <StatusBadge status={campaign.status} />
-            <button className="icon-button" title="Refresh campaign" onClick={() => pushToast("Campaign state refreshed.", "info")}>
-              <RefreshCw size={18} />
-            </button>
-            <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
-          </div>
-        </header>
-
-        <section className="metric-grid" aria-label="Campaign metrics">
-          {metrics.map((metric, index) => (
-            <div className="metric-card reveal-up" style={{ animationDelay: `${index * 60}ms` }} key={metric.label}>
-              <div className="metric-icon">
-                <metric.icon size={18} />
-              </div>
-              <span>{metric.label}</span>
-              <strong>
-                {metric.label === "Recipients"
-                  ? campaign.recipients.length
-                  : metric.label === "Confidential volume"
-                    ? `${formatUnits(total)} ${campaign.tokenSymbol}`
-                    : metric.value}
-              </strong>
-              <small>{metric.label === "Recipients" ? `${claimed} claimed · ${claimRate(campaign)}% complete` : metric.delta}</small>
+          <div className="mt-auto rounded-[14px] border border-hairline bg-white/[0.02] p-4">
+            <span className="font-mono text-[10.5px] uppercase tracking-wider text-purple-bright">
+              Privacy guarantee
+            </span>
+            <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
+              Amounts stay encrypted onchain. Only the recipient can decrypt their allocation.
+            </p>
+            <div className="mt-3 grid gap-2 text-[12px] text-ink-2">
+              <span className="flex items-center gap-2">
+                <Lock size={14} className="text-purple-bright" /> FHEVM encrypted ledger
+              </span>
+              <span className="flex items-center gap-2">
+                <KeyRound size={14} className="text-purple-bright" /> EIP-712 user decryption
+              </span>
+              <span className="flex items-center gap-2">
+                <BadgeCheck size={14} className="text-purple-bright" /> Sepolia registry-first
+              </span>
             </div>
-          ))}
-        </section>
+          </div>
+        </aside>
 
-        <div className="view-fade" key={activeView}>
-          {view}
-        </div>
-      </section>
+        {/* ---------------- workspace ---------------- */}
+        <section className="min-w-0 flex-1 px-5 py-6 md:px-8">
+          {/* mobile nav */}
+          <nav className="mb-5 flex gap-1.5 overflow-x-auto md:hidden" aria-label="Primary">
+            {NAV.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveView(item.id)}
+                className={cn(
+                  "flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-2 text-[13px] font-medium transition-colors",
+                  activeView === item.id
+                    ? "border-purple/40 bg-purple/10 text-purple-bright"
+                    : "border-hairline text-ink-muted hover:text-ink"
+                )}
+              >
+                <item.icon size={15} />
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-mono text-[11px] uppercase tracking-wider text-purple-bright">
+                Private payouts, grants, airdrops &amp; unlocks
+              </p>
+              <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-ink">{campaign.name}</h1>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <RuntimeBadge status={runtime.status} runtime={runtime.runtime} />
+              <CampaignBadge status={campaign.status} />
+              <IconButton icon={RefreshCw} label="Refresh campaign" onClick={() => pushToast("Campaign state refreshed.", "info")} />
+              <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false} />
+            </div>
+          </header>
+
+          <section className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="Campaign metrics">
+            {metrics.map((metric) => (
+              <Stat
+                key={metric.label}
+                icon={metric.icon}
+                label={metric.label}
+                value={
+                  metric.label === "Recipients"
+                    ? campaign.recipients.length
+                    : metric.label === "Confidential volume"
+                      ? `${formatUnits(total)} ${campaign.tokenSymbol}`
+                      : metric.value
+                }
+                sub={metric.label === "Recipients" ? `${claimed} claimed · ${claimRate(campaign)}% complete` : metric.delta}
+              />
+            ))}
+          </section>
+
+          <div key={activeView} className="mt-6" style={{ animation: "view-fade 0.34s cubic-bezier(0.22,1,0.36,1) both" }}>
+            {view}
+          </div>
+        </section>
+      </div>
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
-    </main>
+    </Surface>
   );
 }
+
+const NAV = [
+  { id: "command", icon: Network, label: "Command" },
+  { id: "claim", icon: Wallet, label: "Claim Desk" },
+  { id: "registry", icon: WalletCards, label: "Registry" },
+  { id: "audit", icon: ClipboardCheck, label: "Audit" }
+] as const;
 
 type IconType = typeof Network;
 
 function NavButton({ icon: Icon, label, active, onClick }: { icon: IconType; label: string; active: boolean; onClick: () => void }) {
   return (
-    <button className={`nav-button ${active ? "active" : ""}`} onClick={onClick}>
-      <Icon size={18} />
+    <button
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-[14px] font-medium transition-colors",
+        active ? "bg-purple/12 text-ink ring-1 ring-purple/30" : "text-ink-muted hover:bg-white/[0.04] hover:text-ink"
+      )}
+    >
+      <Icon size={18} className={active ? "text-purple-bright" : ""} />
       <span>{label}</span>
     </button>
   );
 }
 
-function StatusBadge({ status }: { status: CampaignStatus }) {
-  const labels: Record<CampaignStatus, string> = {
-    draft: "Draft",
-    encrypting: "Encrypting",
-    funding: "Funding",
-    live: "Live",
-    closed: "Closed"
-  };
+const CAMPAIGN_BADGE: Record<CampaignStatus, { tone: StatusTone; label: string }> = {
+  draft: { tone: "ready", label: "Draft" },
+  encrypting: { tone: "encrypted", label: "Encrypting" },
+  funding: { tone: "encrypted", label: "Funding" },
+  live: { tone: "live", label: "Live" },
+  closed: { tone: "paused", label: "Closed" }
+};
+
+function CampaignBadge({ status }: { status: CampaignStatus }) {
+  const { tone, label } = CAMPAIGN_BADGE[status];
   return (
-    <span className={`status status-${status}`}>
-      <span className="status-dot" />
-      {labels[status]}
-    </span>
+    <ToneBadge tone={tone} pulse={status === "live"}>
+      {label}
+    </ToneBadge>
   );
 }
 
@@ -504,14 +551,27 @@ function RuntimeBadge({ status, runtime }: { status: RuntimeStatus; runtime: "de
         : status === "error"
           ? "Demo · relayer offline"
           : "Demo data";
-  const tone = runtime === "live" ? "live" : status === "initializing" ? "init" : status === "error" ? "warn" : "demo";
-  const title =
-    runtime === "live"
-      ? "Connected to Sepolia with the Zama FHE relayer — actions are real onchain transactions."
-      : "Connect a Sepolia wallet to run the real confidential airdrop path. Until then, the app shows demo data.";
+  const isLive = runtime === "live";
+  const title = isLive
+    ? "Connected to Sepolia with the FHE relayer — actions are real onchain transactions."
+    : "Connect a Sepolia wallet to run the real confidential airdrop path. Until then, the app shows demo data.";
   return (
-    <span className={`runtime-badge runtime-badge-${tone}`} title={title}>
-      {status === "initializing" ? <Spinner size={12} /> : <span className="runtime-badge-dot" />}
+    <span
+      title={title}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-medium",
+        isLive
+          ? "border-mint/30 bg-mint/10 text-mint-bright"
+          : status === "error"
+            ? "border-amber/30 bg-amber/10 text-amber"
+            : "border-hairline bg-white/[0.03] text-ink-muted"
+      )}
+    >
+      {status === "initializing" ? (
+        <Spinner size={12} />
+      ) : (
+        <span className={cn("h-1.5 w-1.5 rounded-full", isLive ? "bg-mint-bright" : status === "error" ? "bg-amber" : "bg-ink-faint")} />
+      )}
       {label}
     </span>
   );
@@ -581,633 +641,5 @@ function loadClaimSession(): { campaign: Campaign; tokenOpsResult: TokenOpsDistr
   }
 }
 
-function CommandCenter({
-  campaign,
-  selectedWrapper,
-  csvInput,
-  invalidRows,
-  busyAction,
-  tokenOpsReadiness,
-  tokenOpsResult,
-  distributionMode,
-  onCsvChange,
-  onParseCsv,
-  onEncrypt,
-  onTokenOpsSync,
-  onDownloadTemplate,
-  onCopyClaimLink,
-  onNewCampaign,
-  onStatusChange,
-  onNameChange,
-  onModeChange
-}: {
-  campaign: Campaign;
-  selectedWrapper: WrapperPair;
-  csvInput: string;
-  invalidRows: number;
-  busyAction: string | null;
-  tokenOpsReadiness: TokenOpsReadiness;
-  tokenOpsResult: TokenOpsDistributionResult | null;
-  distributionMode: TokenOpsMode;
-  onCsvChange: (value: string) => void;
-  onParseCsv: () => void;
-  onEncrypt: () => void;
-  onTokenOpsSync: () => void;
-  onDownloadTemplate: () => void;
-  onCopyClaimLink: (url: string, label: string) => void;
-  onNewCampaign: () => void;
-  onStatusChange: (status: CampaignStatus) => void;
-  onNameChange: (name: string) => void;
-  onModeChange: (mode: TokenOpsMode) => void;
-}) {
-  const total = campaignTotal(campaign);
-
-  return (
-    <div className="two-column">
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-kicker">Creator workflow</span>
-            <h2>Distribution command center</h2>
-          </div>
-          <button className="secondary-button" onClick={onNewCampaign}>
-            <Plus size={17} />
-            New campaign
-          </button>
-        </div>
-
-        <div className="workflow">
-          <WorkflowStep
-            index={1}
-            icon={WalletCards}
-            title="Choose registry token"
-            detail={`${selectedWrapper.symbol} · ${compactAddress(selectedWrapper.confidentialToken)}`}
-            done
-          />
-          <WorkflowStep
-            index={2}
-            icon={Upload}
-            title="Load recipients"
-            detail={`${campaign.recipients.length} rows · ${invalidRows} issues`}
-            done={campaign.recipients.length > 0}
-          />
-          <WorkflowStep
-            index={3}
-            icon={FileLock2}
-            title="Encrypt allocations"
-            detail="FHE handles + recipient ACL"
-            done={campaign.status !== "draft"}
-            active={campaign.status === "encrypting"}
-          />
-          <WorkflowStep
-            index={4}
-            icon={Send}
-            title="Launch with TokenOps"
-            detail="Operator, funding, claim window"
-            done={campaign.status === "live"}
-            active={campaign.status === "funding"}
-          />
-        </div>
-
-        <div className="form-grid">
-          <label>
-            Campaign name
-            <input value={campaign.name} onChange={(e) => onNameChange(e.target.value)} placeholder="My private distribution" />
-          </label>
-          <label>
-            Claim window
-            <input value={`${campaign.claimStart.replace("T", " ")} -> ${campaign.claimEnd.replace("T", " ")}`} readOnly />
-          </label>
-          <label>
-            Privacy mode
-            <select value={campaign.privacyMode} disabled>
-              <option>amounts-and-list-private</option>
-              <option>amounts-private</option>
-            </select>
-          </label>
-          <label>
-            Launch operator
-            <input value={compactAddress(campaign.tokenOpsOperator)} readOnly />
-          </label>
-        </div>
-
-        <div className="mode-toggle">
-          <button
-            className={`mode-toggle-btn ${distributionMode === "confidential-airdrop" ? "active" : ""}`}
-            onClick={() => onModeChange("confidential-airdrop")}
-          >
-            <Send size={15} />
-            Airdrop
-          </button>
-          <button
-            className={`mode-toggle-btn ${distributionMode === "confidential-disperse" ? "active" : ""}`}
-            onClick={() => onModeChange("confidential-disperse")}
-          >
-            <Network size={15} />
-            Disperse
-          </button>
-        </div>
-
-        <TokenOpsPreflight readiness={tokenOpsReadiness} />
-
-        <div className="action-row">
-          <button className="secondary-button" onClick={() => onStatusChange(campaign.status === "live" ? "closed" : "live")}>
-            {campaign.status === "live" ? <Pause size={17} /> : <Play size={17} />}
-            {campaign.status === "live" ? "Close" : "Open"}
-          </button>
-          <button className="secondary-button" onClick={onEncrypt} disabled={busyAction === "encrypt"}>
-            {busyAction === "encrypt" ? <Spinner /> : <FileLock2 size={17} />}
-            {busyAction === "encrypt" ? "Encrypting" : "Encrypt batch"}
-          </button>
-          <button className="primary-button" onClick={onTokenOpsSync} disabled={busyAction === "tokenops"}>
-            {busyAction === "tokenops" ? <Spinner /> : <Send size={17} />}
-            {busyAction === "tokenops" ? "Staging" : "Stage privately"}
-          </button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-kicker">CSV importer</span>
-            <h2>Private allocation batch</h2>
-          </div>
-          <span className="mini-badge">
-            <Lock size={13} /> {formatUnits(total)} {campaign.tokenSymbol}
-          </span>
-        </div>
-        <div className="csv-toolbar">
-          <button className="ghost-button" onClick={onDownloadTemplate}>
-            <Download size={15} />
-            Download template
-          </button>
-        </div>
-        <textarea className="csv-box" value={csvInput} onChange={(event) => onCsvChange(event.target.value)} spellCheck={false} />
-        <div className="action-row">
-          <button className="secondary-button" onClick={onParseCsv}>
-            <Upload size={17} />
-            Validate CSV
-          </button>
-          <button className="secondary-button" onClick={onEncrypt} disabled={busyAction === "encrypt" || campaign.recipients.length === 0}>
-            {busyAction === "encrypt" ? <Spinner /> : <KeyRound size={17} />}
-            {busyAction === "encrypt" ? "Encrypting" : "Encrypt allocations"}
-          </button>
-        </div>
-        <RecipientTable campaign={campaign} compact />
-        <BatchClaimProgress campaign={campaign} />
-        <ClaimPacketPreview result={tokenOpsResult} onCopyLink={onCopyClaimLink} />
-      </section>
-    </div>
-  );
-}
-
-function TokenOpsPreflight({ readiness }: { readiness: TokenOpsReadiness }) {
-  return (
-    <div className="tokenops-card">
-      <div className="tokenops-card-head">
-        <div>
-          <span className="panel-kicker">Distribution readiness</span>
-          <strong>{readiness.mode === "confidential-airdrop" ? "Confidential airdrop" : "Confidential disperse"}</strong>
-        </div>
-        <span className={`runtime-pill ${readiness.runtime}`}>{readiness.runtime}</span>
-      </div>
-      <div className="preflight-grid">
-        {readiness.items.map((item) => (
-          <div className={`preflight-item ${item.ok ? "ok" : "warn"}`} key={item.label}>
-            {item.ok ? <Check size={15} /> : <AlertCircle size={15} />}
-            <div>
-              <strong>{item.label}</strong>
-              <span>{item.detail}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ClaimPacketPreview({ result, onCopyLink }: { result: TokenOpsDistributionResult | null; onCopyLink: (url: string, label: string) => void }) {
-  if (!result) {
-    return (
-      <div className="claim-packet-empty">
-        <KeyRound size={16} />
-        <span>Stage the distribution to generate recipient claim packets.</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="claim-packet-panel">
-      <div className="packet-head">
-        <span className="panel-kicker">Recipient delivery</span>
-        <span className="mini-badge">{result.claimPackets.length} packets</span>
-      </div>
-      <div className="packet-list">
-        {result.claimPackets.map((packet) => (
-          <div className="packet-row" key={packet.recipientId}>
-            <div>
-              <strong>{packet.label}</strong>
-              <span className="mono">{compactAddress(packet.recipient)}</span>
-            </div>
-            <button
-              className="ghost-button packet-copy-btn"
-              onClick={() => onCopyLink(packet.deliveryUrl, packet.label)}
-              title="Copy claim link"
-            >
-              <Copy size={14} />
-              Copy link
-            </button>
-          </div>
-        ))}
-      </div>
-      <p className="muted-note">
-        Share each link privately with its recipient. The URL contains only the encrypted handle — no plaintext amount is visible.
-      </p>
-    </div>
-  );
-}
-
-function BatchClaimProgress({ campaign }: { campaign: Campaign }) {
-  const total = campaign.recipients.length;
-  if (total === 0) return null;
-
-  const claimed = campaign.recipients.filter((r) => r.claimed).length;
-  const decrypted = campaign.recipients.filter((r) => r.decrypted).length;
-  const rate = Math.round((claimed / total) * 100);
-
-  return (
-    <div className="batch-progress">
-      <div className="batch-progress-head">
-        <span className="panel-kicker">Claim progress</span>
-        <span className="mono">{claimed}/{total} claimed</span>
-      </div>
-      <div className="progress-bar">
-        <span style={{ width: `${rate}%` }} />
-      </div>
-      <div className="batch-progress-stats">
-        <span>{decrypted} decrypted</span>
-        <span>{total - claimed} pending</span>
-      </div>
-    </div>
-  );
-}
-
-function WorkflowStep({
-  index,
-  icon: Icon,
-  title,
-  detail,
-  done,
-  active
-}: {
-  index: number;
-  icon: IconType;
-  title: string;
-  detail: string;
-  done?: boolean;
-  active?: boolean;
-}) {
-  return (
-    <div className={`workflow-step ${done ? "done" : ""} ${active ? "active" : ""}`}>
-      <span className="workflow-icon">{done ? <Check size={18} /> : <Icon size={18} />}</span>
-      <div>
-        <strong>
-          <em>{String(index).padStart(2, "0")}</em>
-          {title}
-        </strong>
-        <small>{detail}</small>
-      </div>
-    </div>
-  );
-}
-
-function RecipientTable({ campaign, compact = false }: { campaign: Campaign; compact?: boolean }) {
-  return (
-    <div className={`table-wrap ${compact ? "compact" : ""}`}>
-      <table>
-        <thead>
-          <tr>
-            <th>Recipient</th>
-            <th>Allocation</th>
-            <th>Handle</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {campaign.recipients.map((recipient) => (
-            <tr key={recipient.id}>
-              <td>
-                <strong>{recipient.label}</strong>
-                <span>{compactAddress(recipient.address)}</span>
-              </td>
-              <td>
-                <EncryptedValue revealed={recipient.decrypted} amount={recipient.amount} symbol={campaign.tokenSymbol} />
-              </td>
-              <td className="mono">{recipient.encryptedHandle}</td>
-              <td>
-                <span className={`row-status ${recipient.claimed ? "claimed" : recipient.risk}`}>
-                  {recipient.claimed ? "claimed" : recipient.risk === "clear" ? "ready" : recipient.risk}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ClaimDesk({
-  campaign,
-  recipient,
-  busyAction,
-  connectedAccount,
-  runtime,
-  onRecipientSelect,
-  onDecrypt,
-  onClaim
-}: {
-  campaign: Campaign;
-  recipient: Recipient;
-  busyAction: string | null;
-  connectedAccount?: Address;
-  runtime: "demo" | "live";
-  onRecipientSelect: (id: string) => void;
-  onDecrypt: (recipient: Recipient) => void;
-  onClaim: (recipient: Recipient) => void;
-}) {
-  // When a wallet is connected, the recipient is locked to that address —
-  // nobody can view another person's allocation. Without a wallet the demo
-  // stays explorable via the dropdown.
-  const matched = connectedAccount
-    ? campaign.recipients.find((item) => item.address.toLowerCase() === connectedAccount.toLowerCase())
-    : recipient;
-  const gated = Boolean(connectedAccount);
-  const active = matched ?? recipient;
-
-  const steps = useMemo(
-    () => [
-      { id: "connect", label: connectedAccount ? "Wallet connected" : "Connect wallet", status: connectedAccount ? "done" : "active" },
-      { id: "verify", label: "Eligibility verified", status: matched ? "done" : gated ? "pending" : "done" },
-      { id: "decrypt", label: "EIP-712 decrypt", status: active?.decrypted ? "done" : "active" },
-      { id: "claim", label: "Confidential claim", status: active?.claimed ? "done" : active?.decrypted ? "active" : "pending" }
-    ],
-    [active, matched, gated, connectedAccount]
-  );
-
-  const decrypting = busyAction === `decrypt-${active?.id}`;
-  const claiming = busyAction === `claim-${active?.id}`;
-
-  if (gated && !matched) {
-    return (
-      <div className="two-column claim-layout">
-        <section className="panel claim-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="panel-kicker">Recipient experience</span>
-              <h2>Claim confidential allocation</h2>
-            </div>
-          </div>
-          <div className="empty-state">
-            <Lock size={22} />
-            <strong>No allocation for {compactAddress(connectedAccount!)}</strong>
-            <span>This wallet is not a recipient in this campaign. Only eligible wallets can decrypt an allocation.</span>
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <span className="panel-kicker">Public-safe status</span>
-              <h2>Campaign progress</h2>
-            </div>
-            <span className="mini-badge">{claimRate(campaign)}%</span>
-          </div>
-          <div className="progress-bar">
-            <span style={{ width: `${claimRate(campaign)}%` }} />
-          </div>
-          <p className="muted-note">Observers see only the claim rate and event trail — never the encrypted amounts.</p>
-        </section>
-      </div>
-    );
-  }
-
-  return (
-    <div className="two-column claim-layout">
-      <section className="panel claim-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-kicker">Recipient experience</span>
-            <h2>Claim confidential allocation</h2>
-          </div>
-          {gated ? (
-            <span className="mini-badge">
-              <Wallet size={13} /> {compactAddress(connectedAccount!)}
-            </span>
-          ) : (
-            <div className="select-wrap">
-              <select value={active?.id} onChange={(event) => onRecipientSelect(event.target.value)}>
-                {campaign.recipients.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={16} />
-            </div>
-          )}
-        </div>
-
-        <div className={`claim-amount ${active?.decrypted ? "is-open" : "is-locked"} ${decrypting ? "is-working" : ""}`}>
-          <span className="claim-amount-label">
-            <Eye size={14} /> Private allocation · only you can see this
-          </span>
-          <strong>
-            <EncryptedValue revealed={!!active?.decrypted} amount={active?.amount ?? 0n} symbol={campaign.tokenSymbol} size="hero" />
-          </strong>
-          <small className="mono">{active?.encryptedHandle}</small>
-        </div>
-
-        <div className="claim-steps">
-          {steps.map((step) => (
-            <div className={`claim-step ${step.status}`} key={step.id}>
-              <span>{step.status === "done" ? <Check size={15} /> : <Lock size={15} />}</span>
-              {step.label}
-            </div>
-          ))}
-        </div>
-
-        <div className="action-row">
-          <button className="secondary-button" onClick={() => onDecrypt(active)} disabled={!active || active.decrypted || decrypting}>
-            {decrypting ? <Spinner /> : <Eye size={17} />}
-            {decrypting ? "Decrypting" : active?.decrypted ? "Decrypted" : runtime === "live" ? "Decrypt onchain" : "Decrypt"}
-          </button>
-          <button
-            className="primary-button"
-            onClick={() => onClaim(active)}
-            disabled={!active || active.claimed || !active.decrypted || claiming}
-          >
-            {claiming ? <Spinner /> : <Send size={17} />}
-            {active?.claimed ? "Claimed" : claiming ? "Claiming" : "Claim"}
-          </button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-kicker">Public-safe status</span>
-            <h2>Campaign progress</h2>
-          </div>
-          <span className="mini-badge">{claimRate(campaign)}%</span>
-        </div>
-        <div className="progress-bar">
-          <span style={{ width: `${claimRate(campaign)}%` }} />
-        </div>
-        <p className="muted-note">
-          Observers see only the claim rate and event trail — never the encrypted amounts.
-        </p>
-        <RecipientTable campaign={campaign} />
-      </section>
-    </div>
-  );
-}
-
-function RegistryDesk({ selectedWrapper, onSelect }: { selectedWrapper: WrapperPair; onSelect: (wrapper: WrapperPair) => void }) {
-  const [query, setQuery] = useState("");
-  const filtered = wrapperPairs.filter((wrapper) => `${wrapper.name} ${wrapper.symbol}`.toLowerCase().includes(query.toLowerCase()));
-
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <span className="panel-kicker">Official Zama registry</span>
-          <h2>Sepolia wrapper pairs</h2>
-        </div>
-        <label className="search-box">
-          <Search size={17} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search wrappers" />
-        </label>
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="empty-state">
-          <Search size={22} />
-          <strong>No wrappers match “{query}”</strong>
-          <span>Try a different token name or symbol.</span>
-        </div>
-      ) : (
-        <div className="registry-grid">
-          {filtered.map((wrapper, index) => {
-            const selected = wrapper.confidentialToken === selectedWrapper.confidentialToken;
-            return (
-              <button
-                className={`registry-item reveal-up ${selected ? "selected" : ""}`}
-                style={{ animationDelay: `${index * 50}ms` }}
-                key={wrapper.confidentialToken}
-                onClick={() => onSelect(wrapper)}
-              >
-                <div>
-                  <strong>{wrapper.symbol}</strong>
-                  <span>{wrapper.name}</span>
-                </div>
-                <div className="registry-meta">
-                  <span className={`mint-tag ${wrapper.publicMint ? "open" : "restricted"}`}>
-                    {wrapper.publicMint ? "Faucet mint" : "Restricted mint"}
-                  </span>
-                  <span className="mono">{compactAddress(wrapper.confidentialToken)}</span>
-                </div>
-                <BadgeCheck size={18} className={selected ? "registry-check selected" : "registry-check"} />
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function AuditDesk({
-  campaign,
-  tokenOpsReadiness,
-  tokenOpsResult,
-  onExport
-}: {
-  campaign: Campaign;
-  tokenOpsReadiness: TokenOpsReadiness;
-  tokenOpsResult: TokenOpsDistributionResult | null;
-  onExport: () => void;
-}) {
-  return (
-    <div className="two-column">
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-kicker">Audit report</span>
-            <h2>Event trail</h2>
-          </div>
-          <button className="primary-button" onClick={onExport}>
-            <Download size={17} />
-            Export
-          </button>
-        </div>
-        <div className="audit-list">
-          {auditTrail.map((event) => (
-            <div className="audit-event" key={event.id}>
-              <time>{event.at}</time>
-              <div>
-                <strong>{event.action}</strong>
-                <span>
-                  {event.actor} · {event.detail}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="evidence-grid">
-          <EvidenceTile label="Distribution route" value={tokenOpsReadiness.mode === "confidential-airdrop" ? "Private airdrop" : "Bulk payout"} />
-          <EvidenceTile label="Network" value="Sepolia" />
-          <EvidenceTile label="Claim packets" value={tokenOpsResult ? String(tokenOpsResult.claimPackets.length) : "not staged"} />
-          <EvidenceTile label="Encrypted batch" value={tokenOpsResult ? compactAddress(tokenOpsResult.encryptedBatchId, 6) : "not staged"} />
-        </div>
-      </section>
-
-      <section className="panel evidence-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="panel-kicker">Privacy checks</span>
-            <h2>Launch checklist</h2>
-          </div>
-          <Shield size={19} />
-        </div>
-        <ChecklistItem label="Recipients validated before launch" />
-        <ChecklistItem label="Amounts encrypted before distribution" />
-        <ChecklistItem label="Each claim packet is recipient-specific" />
-        <ChecklistItem label="Recipients decrypt only their own allocation" />
-        <ChecklistItem label="Public-safe audit export" />
-      </section>
-    </div>
-  );
-}
-
-function EvidenceTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="evidence-tile">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function ChecklistItem({ label }: { label: string }) {
-  return (
-    <div className="checklist-item">
-      <span className="checklist-mark">
-        <Check size={14} />
-      </span>
-      <span>{label}</span>
-      <ArrowRight size={15} />
-    </div>
-  );
-}
 
 export default App;

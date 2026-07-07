@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react-swc";
 import { defineConfig } from "vite";
 import topLevelAwait from "vite-plugin-top-level-await";
@@ -14,7 +15,7 @@ const zamaSdk = fileURLToPath(new URL("../node_modules/@zama-fhe/sdk", import.me
 // top-level await. `wasm` + `topLevelAwait` let Vite bundle it, and we keep it
 // out of the dep pre-bundler so the worker/WASM graph is resolved natively.
 export default defineConfig({
-  plugins: [wasm(), topLevelAwait(), react()],
+  plugins: [tailwindcss(), wasm(), topLevelAwait(), react()],
   cacheDir: ".vite-cache",
   resolve: {
     alias: {
