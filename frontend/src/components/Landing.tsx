@@ -88,8 +88,8 @@ export function Landing({ onLaunch }: { onLaunch: () => void }) {
       {/* ---------------- nav ---------------- */}
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
         <a href="#top" className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-hairline bg-elevated/70 text-purple-bright">
-            <ShieldCheck size={22} />
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-hairline bg-elevated/70 p-1.5">
+            <img src="/shield.png" alt="" className="h-full w-full rounded-[8px] object-contain" aria-hidden="true" />
           </span>
           <span className="leading-tight">
             <strong className="block text-[15px] font-semibold text-ink">ShieldDrop</strong>
