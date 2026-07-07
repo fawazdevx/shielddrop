@@ -457,11 +457,11 @@ function App() {
           </nav>
 
           <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <p className="font-mono text-[11px] uppercase tracking-wider text-purple-bright">
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <p className="font-mono text-[11px] uppercase leading-none tracking-wider text-purple-bright">
                 Private payouts, grants, airdrops &amp; unlocks
               </p>
-              <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-ink">{campaign.name}</h1>
+              <h1 className="truncate text-2xl font-semibold leading-tight tracking-tight text-ink">{campaign.name}</h1>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
               <RuntimeBadge status={runtime.status} runtime={runtime.runtime} />

@@ -1,6 +1,7 @@
 node_modules
 dist
 out
+docs/
 cache
 cache_hardhat
 .env
