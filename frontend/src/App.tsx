@@ -27,6 +27,8 @@ import {
 import { auditTrail, csvTemplate, initialCampaign, metrics, sampleCsv, wrapperPairs, ZERO_ADDRESS } from "./lib/constants";
 import { buildAuditExport, campaignTotal, claimRate, compactAddress, downloadText, formatUnits, isAddress, parseRecipientsCsv } from "./lib/format";
 import {
+  TokenOpsSdkAdapter,
+  type TokenOpsAdapter,
   type TokenOpsDistributionResult,
   type TokenOpsMode,
   type TokenOpsReadiness
@@ -185,6 +187,17 @@ function App() {
       }),
     [campaign.name, campaign.tokenAddress, campaign.tokenSymbol, campaign.recipients, tokenOps]
   );
+  const liveStagingReady = runtime.runtime === "live" && tokenOpsReadiness.runtime === "live" && tokenOpsReadiness.ready;
+  const liveStagingHint =
+    tokenOpsReadiness.runtime === "live" && !tokenOpsReadiness.ready
+      ? `Resolve readiness blockers first: ${tokenOpsReadiness.blockers.join(", ")}.`
+      : runtime.status === "live"
+        ? "Ready to open your wallet and stage a live Sepolia distribution."
+        : runtime.status === "initializing"
+          ? "Wait for the Zama relayer to finish initializing, then stage live."
+          : runtime.status === "error"
+            ? "The Zama relayer failed to initialize. Fix relayer/RPC setup before staging live."
+            : "Connect a Sepolia wallet to stage a live TokenOps transaction.";
 
   async function handleParseCsv() {
     const recipients = parseRecipientsCsv(csvInput);
@@ -204,26 +217,51 @@ function App() {
     setBusyAction(null);
   }
 
-  async function handleTokenOpsSync() {
-    setBusyAction("tokenops");
+  async function stageDistribution(
+    adapter: TokenOpsAdapter,
+    busyKey: "tokenops-live" | "tokenops-preview",
+    expectedRuntime: "live" | "demo"
+  ) {
+    setBusyAction(busyKey);
     try {
-      const result = await tokenOps.createDistribution({
+      const result = await adapter.createDistribution({
         name: campaign.name,
         tokenAddress: campaign.tokenAddress,
         tokenSymbol: campaign.tokenSymbol,
         recipients: campaign.recipients
       });
+      if (result.runtime !== expectedRuntime) {
+        throw new Error(
+          expectedRuntime === "live"
+            ? "Live staging was not ready. Connect Sepolia wallet and wait for Live · Sepolia."
+            : "Demo preview unexpectedly entered live mode."
+        );
+      }
+      const packetsByRecipient = new Map(result.claimPackets.map((packet) => [packet.recipientId, packet]));
+      const stagedRecipients = campaign.recipients.map((recipient) => {
+        const packet = packetsByRecipient.get(recipient.id);
+        return {
+          ...recipient,
+          encryptedHandle: packet?.encryptedInput.handle ?? recipient.encryptedHandle,
+          claimed: result.runtime === "live" ? false : recipient.claimed,
+          decrypted: result.runtime === "live" ? false : recipient.decrypted,
+          claimTxHash: result.runtime === "live" ? undefined : recipient.claimTxHash
+        };
+      });
       const launchedCampaign: Campaign = {
         ...campaign,
         tokenOpsOperator: result.operator as Address,
-        status: "live",
+        status: result.runtime === "live" ? "live" : "funding",
         contractAddress: (result.airdropAddress ?? campaign.contractAddress) as Address,
-        txHash: result.txHash ?? `0x${result.encryptedBatchId.replace(/[^a-f0-9]/g, "").padEnd(64, "0").slice(0, 64)}`
+        recipients: stagedRecipients,
+        stageTxHash: result.runtime === "live" ? result.txHash : undefined,
+        lastClaimTxHash: undefined,
+        txHash: result.runtime === "live" ? result.txHash : undefined
       };
       setTokenOpsResult(result);
       setCampaign(launchedCampaign);
       saveClaimSession(launchedCampaign, result);
-      const where = result.runtime === "live" ? "onchain on Sepolia" : "in demo preview";
+      const where = result.runtime === "live" ? "onchain on Sepolia" : "as demo preview packets";
       pushToast(
         `Private ${result.mode.replace("confidential-", "")} staged ${where} · ${result.claimPackets.length} claim packets.`,
         "success"
@@ -233,6 +271,23 @@ function App() {
     } finally {
       setBusyAction(null);
     }
+  }
+
+  async function handleTokenOpsSync() {
+    if (!liveStagingReady) {
+      pushToast(liveStagingHint, "warn");
+      return;
+    }
+    await stageDistribution(tokenOps, "tokenops-live", "live");
+  }
+
+  async function handlePreviewTokenOpsSync() {
+    if (campaign.status === "live") {
+      pushToast("This campaign already has live Sepolia evidence. Start a new campaign to preview demo packets.", "warn");
+      return;
+    }
+    const demoTokenOps = new TokenOpsSdkAdapter({ mode: distributionMode });
+    await stageDistribution(demoTokenOps, "tokenops-preview", "demo");
   }
 
   async function handleDecrypt(recipient: Recipient) {
@@ -264,8 +319,16 @@ function App() {
       setCampaign((current) => ({
         ...current,
         recipients: current.recipients.map((item) =>
-          item.id === recipient.id ? { ...item, claimed: true, decrypted: true } : item
+          item.id === recipient.id
+            ? {
+                ...item,
+                claimed: true,
+                decrypted: true,
+                claimTxHash: runtime.runtime === "live" ? hash : item.claimTxHash
+              }
+            : item
         ),
+        lastClaimTxHash: runtime.runtime === "live" ? hash : current.lastClaimTxHash,
         txHash: runtime.runtime === "live" ? hash : current.txHash
       }));
       if (runtime.runtime === "live") {
@@ -311,6 +374,8 @@ function App() {
       status: "draft",
       recipients: [],
       contractAddress: undefined,
+      stageTxHash: undefined,
+      lastClaimTxHash: undefined,
       txHash: undefined
     });
     pushToast("New campaign draft started.", "info");
@@ -354,10 +419,13 @@ function App() {
         tokenOpsReadiness={tokenOpsReadiness}
         tokenOpsResult={tokenOpsResult}
         distributionMode={distributionMode}
+        liveStagingReady={liveStagingReady}
+        liveStagingHint={liveStagingHint}
         onCsvChange={setCsvInput}
         onParseCsv={handleParseCsv}
         onEncrypt={handleEncrypt}
         onTokenOpsSync={handleTokenOpsSync}
+        onPreviewTokenOps={handlePreviewTokenOpsSync}
         onDownloadTemplate={handleDownloadTemplate}
         onCopyClaimLink={handleCopyClaimLink}
         onNewCampaign={handleNewCampaign}

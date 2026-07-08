@@ -221,9 +221,11 @@ The contract does not need plaintext amounts at claim time. It only needs an enc
 3. Creator selects an official confidential wrapper such as `cUSDTMock`.
 4. Creator imports a CSV with wallet, label, and amount.
 5. ShieldDrop validates addresses, duplicates, positive amounts, totals, route readiness, and start-window safety.
-6. Creator clicks `Stage privately`.
-7. TokenOps adapter stages the confidential airdrop and returns claim packets.
-8. Creator copies recipient-specific claim links.
+6. Creator can click `Preview demo packets` if they are offline or not ready for Sepolia.
+7. When the runtime badge says `Live · Sepolia`, creator clicks `Stage live on Sepolia`.
+8. TokenOps adapter opens wallet prompts, stages the confidential airdrop, and returns claim packets.
+9. ShieldDrop records the setup transaction, stage transaction, claim-packet count, and Etherscan links.
+10. Creator copies recipient-specific claim links.
 
 ### Creator: Confidential Disperse
 

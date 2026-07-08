@@ -45,7 +45,7 @@ Creator
   -> Pick official confidential wrapper, for example cUSDTMock
   -> Import recipient CSV
   -> Validate addresses, duplicates, totals, route readiness, claim window
-  -> Stage privately through TokenOps
+  -> Preview demo packets or stage live on Sepolia through TokenOps
   -> Copy encrypted recipient claim links
 
 Recipient
@@ -59,6 +59,7 @@ Recipient
 Team / Judge
   -> Open Registry view
   -> Open Audit view
+  -> Verify Sepolia transaction proof links
   -> Export public-safe metadata
 ```
 
@@ -95,7 +96,7 @@ Live airdrop mode:
 4. Calls `createAndFundConfidentialAirdrop`.
 5. Encrypts each recipient allocation for the created airdrop address.
 6. Signs recipient claim authorization data with `signClaimAuthorization`.
-7. Returns claim packets with encrypted input, signature, airdrop address, and delivery URL.
+7. Returns claim packets with encrypted input, signature, airdrop address, delivery URL, and Sepolia transaction proof.
 
 Live disperse mode:
 
@@ -105,7 +106,7 @@ Live disperse mode:
 
 Demo mode:
 
-When wallet, RPC, or relayer clients are missing, the adapter returns deterministic TokenOps-style claim packets. Judges can still click the full product flow without secrets or funded wallets. The UI labels runtime as `demo` or `live` so the recording stays honest.
+When wallet, RPC, or relayer clients are missing, the adapter returns deterministic TokenOps-style claim packets. Judges can still click the full product flow without secrets or funded wallets. The UI labels runtime as `demo` or `live`, separates `Preview demo packets` from `Stage live on Sepolia`, and only shows Etherscan proof after a live transaction.
 
 ## Zama And ERC-7984 Details
 
@@ -271,14 +272,19 @@ For the strongest judging recording:
 1. Open ShieldDrop and connect a Sepolia wallet.
 2. Select `Airdrop`, then select `cUSDTMock` from the registry.
 3. Import a CSV with three recipients.
-4. Run validation and stage privately.
-5. Copy a generated claim link.
-6. Open the Claim Desk in a new tab.
-7. Connect the recipient wallet.
-8. Decrypt the allocation.
-9. Claim confidentially.
-10. Show Registry and Audit views.
-11. Show passing `npm run contracts:test` output if time allows.
+4. Run validation.
+5. If you are not live yet, click `Preview demo packets` to show the packet UX.
+6. When the runtime badge says `Live · Sepolia`, click `Stage live on Sepolia`.
+7. Show the wallet prompt and the `View Sepolia tx` link.
+8. Copy a generated claim link.
+9. Open the Claim Desk in a new tab.
+10. Connect the recipient wallet.
+11. Decrypt the allocation.
+12. Claim on Sepolia.
+13. Show the claim transaction link in Claim Desk or Audit.
+14. Show Registry and Audit views.
+15. Export the public-safe audit CSV with stage and claim tx hashes.
+16. Show passing `npm run contracts:test` output if time allows.
 
 If you record in demo mode, say that it is the deterministic demo runtime. If you record live Sepolia transactions, show the transaction hash.
 

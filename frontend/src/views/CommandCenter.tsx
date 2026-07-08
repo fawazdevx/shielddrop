@@ -3,12 +3,12 @@ import {
   Check,
   Copy,
   Download,
+  ExternalLink,
   FileLock2,
   KeyRound,
   Lock,
   Network,
   Pause,
-  Play,
   Plus,
   Send,
   Upload,
@@ -16,7 +16,7 @@ import {
   WalletCards,
   type LucideIcon
 } from "lucide-react";
-import { campaignTotal, compactAddress, formatUnits } from "../lib/format";
+import { campaignTotal, compactAddress, formatUnits, sepoliaTxUrl } from "../lib/format";
 import type {
   TokenOpsDistributionResult,
   TokenOpsMode,
@@ -58,10 +58,13 @@ export function CommandCenter({
   tokenOpsReadiness,
   tokenOpsResult,
   distributionMode,
+  liveStagingReady,
+  liveStagingHint,
   onCsvChange,
   onParseCsv,
   onEncrypt,
   onTokenOpsSync,
+  onPreviewTokenOps,
   onDownloadTemplate,
   onCopyClaimLink,
   onNewCampaign,
@@ -77,10 +80,13 @@ export function CommandCenter({
   tokenOpsReadiness: TokenOpsReadiness;
   tokenOpsResult: TokenOpsDistributionResult | null;
   distributionMode: TokenOpsMode;
+  liveStagingReady: boolean;
+  liveStagingHint: string;
   onCsvChange: (value: string) => void;
   onParseCsv: () => void;
   onEncrypt: () => void;
   onTokenOpsSync: () => void;
+  onPreviewTokenOps: () => void;
   onDownloadTemplate: () => void;
   onCopyClaimLink: (url: string, label: string) => void;
   onNewCampaign: () => void;
@@ -91,7 +97,9 @@ export function CommandCenter({
   const total = campaignTotal(campaign);
   const hasRecipients = campaign.recipients.length > 0;
   const encrypting = busyAction === "encrypt";
-  const staging = busyAction === "tokenops";
+  const liveStaging = busyAction === "tokenops-live";
+  const previewing = busyAction === "tokenops-preview";
+  const hasLiveEvidence = tokenOpsResult?.runtime === "live" || Boolean(campaign.stageTxHash);
 
   const steps = [
     {
@@ -202,20 +210,46 @@ export function CommandCenter({
 
         {/* actions */}
         <div className="mt-6 flex flex-wrap gap-2.5">
-          <Button
-            variant="secondary"
-            icon={campaign.status === "live" ? Pause : Play}
-            onClick={() => onStatusChange(campaign.status === "live" ? "closed" : "live")}
-          >
-            {campaign.status === "live" ? "Close" : "Open"}
-          </Button>
+          {campaign.status === "live" ? (
+            <Button variant="secondary" icon={Pause} onClick={() => onStatusChange("closed")}>
+              Close
+            </Button>
+          ) : null}
           <Button variant="secondary" icon={FileLock2} loading={encrypting} disabled={!hasRecipients} onClick={onEncrypt}>
             {encrypting ? "Encrypting" : "Encrypt batch"}
           </Button>
-          <Button icon={Send} loading={staging} disabled={!hasRecipients} onClick={onTokenOpsSync} className="ml-auto">
-            {staging ? "Staging" : "Stage privately"}
+          <Button
+            variant="secondary"
+            icon={KeyRound}
+            loading={previewing}
+            disabled={!hasRecipients || liveStaging || hasLiveEvidence}
+            onClick={onPreviewTokenOps}
+          >
+            {previewing ? "Previewing" : "Preview demo packets"}
+          </Button>
+          <Button
+            icon={Send}
+            loading={liveStaging}
+            disabled={!hasRecipients || !liveStagingReady || previewing}
+            title={liveStagingHint}
+            onClick={onTokenOpsSync}
+            className="ml-auto"
+          >
+            {liveStaging ? "Opening wallet" : "Stage live on Sepolia"}
           </Button>
         </div>
+        <p className={cn("mt-3 text-[12px]", liveStagingReady ? "text-mint-bright" : "text-amber")}>
+          {liveStagingReady
+            ? "Live staging is ready. The next click should open wallet prompts for TokenOps transactions."
+            : liveStagingHint}
+        </p>
+        <LiveLaunchProof
+          ready={liveStagingReady}
+          hint={liveStagingHint}
+          result={tokenOpsResult}
+          stageTxHash={campaign.stageTxHash}
+          claimTxHash={campaign.lastClaimTxHash}
+        />
       </Panel>
 
       {/* ---------------- right: batch + packets ---------------- */}
@@ -392,6 +426,94 @@ function Preflight({ readiness }: { readiness: TokenOpsReadiness }) {
   );
 }
 
+function LiveLaunchProof({
+  ready,
+  hint,
+  result,
+  stageTxHash,
+  claimTxHash
+}: {
+  ready: boolean;
+  hint: string;
+  result: TokenOpsDistributionResult | null;
+  stageTxHash?: string;
+  claimTxHash?: string;
+}) {
+  const setupHref = result?.runtime === "live" ? sepoliaTxUrl(result.setupTxHash) : undefined;
+  const stageHref = result?.runtime === "live" ? sepoliaTxUrl(result.txHash ?? stageTxHash) : undefined;
+  const claimHref = sepoliaTxUrl(claimTxHash);
+  return (
+    <div className="mt-4 rounded-[14px] border border-hairline bg-obsidian-2/50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <span className="font-mono text-[11px] uppercase tracking-wider text-ink-faint">
+            Judge-visible proof
+          </span>
+          <strong className="mt-1 block text-[14px] font-medium text-ink">
+            {stageHref ? "Live Sepolia transaction captured" : ready ? "Ready for live transaction" : "Live staging blocked"}
+          </strong>
+        </div>
+        <span
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+            stageHref
+              ? "border-mint/30 bg-mint/10 text-mint-bright"
+              : ready
+                ? "border-purple/30 bg-purple/10 text-purple-bright"
+                : "border-amber/30 bg-amber/10 text-amber"
+          )}
+        >
+          {stageHref ? "Recorded" : ready ? "Wallet next" : "Needs setup"}
+        </span>
+      </div>
+      <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
+        {stageHref
+          ? "Use these links in the demo recording and audit export. Demo previews never create this proof."
+          : hint}
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <ProofLink label="Operator approval" href={setupHref} fallback={result?.runtime === "live" ? "Not required" : "Waiting"} />
+        <ProofLink label="Stage tx" href={stageHref} fallback={ready ? "Click live stage" : "Waiting"} strong />
+        <ProofLink label="Latest claim" href={claimHref} fallback="After recipient claim" />
+      </div>
+    </div>
+  );
+}
+
+function ProofLink({
+  label,
+  href,
+  fallback,
+  strong = false
+}: {
+  label: string;
+  href?: string;
+  fallback: string;
+  strong?: boolean;
+}) {
+  return (
+    <div className="rounded-[10px] border border-hairline bg-white/[0.02] px-3 py-2.5">
+      <span className="block text-[10.5px] uppercase tracking-wide text-ink-faint">{label}</span>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className={cn(
+            "mt-1 inline-flex items-center gap-1.5 font-mono text-[11.5px] transition-colors hover:text-mint-bright",
+            strong ? "text-mint-bright" : "text-ink-2"
+          )}
+        >
+          View tx
+          <ExternalLink size={12} />
+        </a>
+      ) : (
+        <span className="mt-1 block truncate text-[11.5px] text-ink-muted">{fallback}</span>
+      )}
+    </div>
+  );
+}
+
 function RecipientTable({ campaign }: { campaign: Campaign }) {
   return (
     <div className="mt-5 overflow-hidden rounded-[12px] border border-hairline">
@@ -491,20 +613,49 @@ function ClaimPackets({
     return (
       <div className="mt-5 flex items-center gap-2.5 rounded-[12px] border border-hairline bg-white/[0.02] px-4 py-3.5 text-[12.5px] text-ink-muted">
         <KeyRound size={16} className="text-ink-faint" />
-        Stage the distribution to generate recipient claim packets.
+        Preview demo packets, or connect Sepolia and stage live to generate wallet-backed claim packets.
       </div>
     );
   }
 
+  const txHref = result.runtime === "live" ? sepoliaTxUrl(result.txHash) : undefined;
+
   return (
     <div className="mt-5 rounded-[14px] border border-purple/25 bg-purple/[0.05] p-4">
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-[11px] uppercase tracking-wider text-purple-bright">
-          Recipient delivery
-        </span>
-        <span className="rounded-full border border-purple/30 bg-purple/10 px-2.5 py-1 text-[11px] font-medium text-purple-bright">
-          {result.claimPackets.length} packets
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div>
+          <span className="font-mono text-[11px] uppercase tracking-wider text-purple-bright">
+            Recipient delivery
+          </span>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-purple/30 bg-purple/10 px-2.5 py-1 text-[11px] font-medium text-purple-bright">
+              {result.claimPackets.length} packets
+            </span>
+            <span
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                result.runtime === "live"
+                  ? "border-mint/30 bg-mint/10 text-mint-bright"
+                  : "border-amber/30 bg-amber/10 text-amber"
+              )}
+            >
+              {result.runtime === "live" ? "Live Sepolia" : "Demo preview"}
+            </span>
+          </div>
+        </div>
+        {txHref ? (
+          <a
+            href={txHref}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-[9px] border border-mint/30 bg-mint/10 px-3 py-2 text-[12px] font-medium text-mint-bright transition-colors hover:bg-mint/15"
+          >
+            View Sepolia tx
+            <ExternalLink size={13} />
+          </a>
+        ) : result.txHash ? (
+          <span className="font-mono text-[11px] text-ink-faint">demo id {compactAddress(result.txHash, 6)}</span>
+        ) : null}
       </div>
       <div className="mt-3 grid gap-2">
         {result.claimPackets.map((p) => (

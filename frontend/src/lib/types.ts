@@ -10,6 +10,7 @@ export type Recipient = {
   encryptedHandle: string;
   claimed: boolean;
   decrypted: boolean;
+  claimTxHash?: string;
   risk: "clear" | "duplicate" | "invalid";
 };
 
@@ -29,6 +30,8 @@ export type Campaign = {
   privacyMode: "amounts-private" | "amounts-and-list-private";
   recipients: Recipient[];
   contractAddress?: Address;
+  stageTxHash?: string;
+  lastClaimTxHash?: string;
   txHash?: string;
 };
 

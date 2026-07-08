@@ -64,6 +64,7 @@ export type TokenOpsDistributionResult = {
   airdropFactory: string;
   disperseSingleton: string;
   airdropAddress?: string;
+  setupTxHash?: Hex;
   txHash?: Hex;
   claimPackets: TokenOpsClaimPacket[];
   readiness: TokenOpsReadiness;
@@ -231,6 +232,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
 
     // Fund the clone in the same tx so recipients can actually claim tokens.
     // Prerequisite: the factory must be an operator on the confidential token.
+    let setupTxHash: Hex | undefined;
     const factoryIsOperator = await publicClient.readContract({
       address: draft.tokenAddress as ViemAddress,
       abi: erc7984OperatorAbi,
@@ -247,6 +249,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
         functionName: "setOperator",
         args: [AIRDROP_FACTORY as ViemAddress, operatorDeadline]
       });
+      setupTxHash = setOperatorHash;
       await publicClient.waitForTransactionReceipt({ hash: setOperatorHash });
     }
 
@@ -297,6 +300,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
       airdropFactory: readiness.airdropFactory,
       disperseSingleton: readiness.disperseSingleton,
       airdropAddress: airdrop,
+      setupTxHash,
       txHash: hash,
       claimPackets,
       readiness

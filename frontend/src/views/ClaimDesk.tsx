@@ -1,6 +1,6 @@
-import { Check, ChevronDown, Eye, KeyRound, Lock, Send, Wallet } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, Eye, KeyRound, Lock, Send, Wallet } from "lucide-react";
 import { useMemo } from "react";
-import { claimRate, compactAddress } from "../lib/format";
+import { claimRate, compactAddress, sepoliaTxUrl } from "../lib/format";
 import type { Address, Campaign, Recipient } from "../lib/types";
 import { Button, EncryptedValue, Panel, StatusBadge, cn } from "../components/ui";
 
@@ -47,6 +47,7 @@ export function ClaimDesk({
 
   const decrypting = busyAction === `decrypt-${active?.id}`;
   const claiming = busyAction === `claim-${active?.id}`;
+  const activeClaimTxHref = sepoliaTxUrl(active?.claimTxHash);
 
   /* wallet connected but not a recipient */
   if (gated && !matched) {
@@ -151,9 +152,27 @@ export function ClaimDesk({
             onClick={() => onClaim(active)}
             className="ml-auto"
           >
-            {active?.claimed ? "Claimed" : claiming ? "Claiming" : "Claim confidentially"}
+            {active?.claimed ? "Claimed" : claiming ? "Opening wallet" : runtime === "live" ? "Claim on Sepolia" : "Preview claim"}
           </Button>
         </div>
+        {activeClaimTxHref ? (
+          <a
+            href={activeClaimTxHref}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-[9px] border border-mint/30 bg-mint/10 px-3 py-2 text-[12px] font-medium text-mint-bright transition-colors hover:bg-mint/15"
+          >
+            View claim tx
+            <ExternalLink size={13} />
+          </a>
+        ) : active?.decrypted && !active.claimed ? (
+          <p className="mt-3 flex items-center gap-1.5 text-[12px] text-ink-faint">
+            <Send size={12} />
+            {runtime === "live"
+              ? "The claim action will request a Sepolia wallet transaction."
+              : "Demo preview updates local state only. Live claims require the Live · Sepolia runtime."}
+          </p>
+        ) : null}
         {!active?.decrypted && (
           <p className="mt-3 flex items-center gap-1.5 text-[12px] text-ink-faint">
             <KeyRound size={12} />
@@ -253,7 +272,20 @@ function PublicRecipientTable({ campaign }: { campaign: Campaign }) {
                 <EncryptedValue revealed={r.decrypted} amount={r.amount} symbol={campaign.tokenSymbol} />
               </td>
               <td className="px-3.5 py-3">
-                <StatusBadge tone={r.claimed ? "claimed" : "ready"} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge tone={r.claimed ? "claimed" : "ready"} />
+                  {sepoliaTxUrl(r.claimTxHash) ? (
+                    <a
+                      href={sepoliaTxUrl(r.claimTxHash)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[11.5px] font-medium text-mint-bright hover:text-mint"
+                    >
+                      tx
+                      <ExternalLink size={11} />
+                    </a>
+                  ) : null}
+                </div>
               </td>
             </tr>
           ))}

@@ -1,9 +1,15 @@
 import type { TokenOpsDistributionResult, TokenOpsReadiness } from "./tokenops";
 import type { Address, Campaign, Recipient } from "./types";
 
+export const SEPOLIA_TX_BASE_URL = "https://sepolia.etherscan.io/tx";
+
 export function compactAddress(address: string, chars = 4) {
   if (!address.startsWith("0x") || address.length < 12) return address;
   return `${address.slice(0, chars + 2)}...${address.slice(-chars)}`;
+}
+
+export function sepoliaTxUrl(hash?: string | null) {
+  return hash && /^0x[a-fA-F0-9]{64}$/.test(hash) ? `${SEPOLIA_TX_BASE_URL}/${hash}` : undefined;
 }
 
 export function formatUnits(value: bigint, decimals = 6) {
@@ -65,6 +71,9 @@ export function buildAuditExport(
   tokenOpsReadiness?: TokenOpsReadiness,
   tokenOpsResult?: TokenOpsDistributionResult | null
 ) {
+  const stageTxHash = tokenOpsResult?.runtime === "live" ? tokenOpsResult.txHash : campaign.stageTxHash;
+  const setupTxHash = tokenOpsResult?.runtime === "live" ? tokenOpsResult.setupTxHash : undefined;
+  const claimTxHashes = campaign.recipients.flatMap((recipient) => recipient.claimTxHash ?? []);
   const rows = [
     ["campaign", campaign.name],
     ["token", campaign.tokenSymbol],
@@ -76,6 +85,13 @@ export function buildAuditExport(
     ["registry_wrapper", campaign.tokenAddress],
     ["distribution_route", tokenOpsReadiness?.mode ?? "not checked"],
     ["launch_runtime", tokenOpsReadiness?.runtime ?? "not checked"],
+    ["staged_runtime", tokenOpsResult?.runtime ?? "not staged"],
+    ["operator_setup_tx", setupTxHash ?? "not required or not captured"],
+    ["operator_setup_tx_url", sepoliaTxUrl(setupTxHash) ?? ""],
+    ["stage_tx", stageTxHash ?? "not captured"],
+    ["stage_tx_url", sepoliaTxUrl(stageTxHash) ?? ""],
+    ["claim_tx_count", String(claimTxHashes.length)],
+    ["claim_tx_hashes", claimTxHashes.join(" ") || "not captured"],
     ["claim_packets", tokenOpsResult ? tokenOpsResult.claimPackets.length.toString() : "not staged"],
     ["encrypted_batch_id", tokenOpsResult?.encryptedBatchId ?? "not staged"]
   ];
