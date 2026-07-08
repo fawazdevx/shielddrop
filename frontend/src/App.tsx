@@ -60,6 +60,7 @@ function App() {
   const [csvInput, setCsvInput] = useState(sampleCsv);
   const [selectedRecipientId, setSelectedRecipientId] = useState(campaign.recipients[1]?.id ?? "");
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [stagingProgress, setStagingProgress] = useState("");
   const [tokenOpsResult, setTokenOpsResult] = useState<TokenOpsDistributionResult | null>(null);
   const [distributionMode, setDistributionMode] = useState<TokenOpsMode>("confidential-airdrop");
   const [claimLinkContext, setClaimLinkContext] = useState<{ recipient: Address; context: ClaimContext } | null>(null);
@@ -223,12 +224,14 @@ function App() {
     expectedRuntime: "live" | "demo"
   ) {
     setBusyAction(busyKey);
+    setStagingProgress(expectedRuntime === "live" ? "Starting live TokenOps staging." : "Preparing demo claim packets.");
     try {
       const result = await adapter.createDistribution({
         name: campaign.name,
         tokenAddress: campaign.tokenAddress,
         tokenSymbol: campaign.tokenSymbol,
-        recipients: campaign.recipients
+        recipients: campaign.recipients,
+        onProgress: setStagingProgress
       });
       if (result.runtime !== expectedRuntime) {
         throw new Error(
@@ -270,6 +273,7 @@ function App() {
       pushToast(decodeError(error, "Staging was cancelled or failed."), "warn");
     } finally {
       setBusyAction(null);
+      setStagingProgress("");
     }
   }
 
@@ -416,6 +420,7 @@ function App() {
         csvInput={csvInput}
         invalidRows={invalidRows}
         busyAction={busyAction}
+        stagingProgress={stagingProgress}
         tokenOpsReadiness={tokenOpsReadiness}
         tokenOpsResult={tokenOpsResult}
         distributionMode={distributionMode}
@@ -655,6 +660,9 @@ function decodeError(error: unknown, fallback: string): string {
     }
     if (/SenderNotAllowed|not allowed|operator/i.test(raw)) {
       return "Token funding was not authorized. Approve the TokenOps operator prompt, then retry staging.";
+    }
+    if (/Request ENCRYPT timed out|ENCRYPT.*timed out|Relayer.*timeout|Request timed out/i.test(raw)) {
+      return "Zama relayer encryption timed out before the next wallet prompt. Retry with one recipient, keep the tab active, or wait a minute and try again.";
     }
     if (/insufficient|balance/i.test(raw)) {
       return "Wallet does not have enough Sepolia ETH or confidential token balance for this distribution.";

@@ -55,6 +55,7 @@ export function CommandCenter({
   csvInput,
   invalidRows,
   busyAction,
+  stagingProgress,
   tokenOpsReadiness,
   tokenOpsResult,
   distributionMode,
@@ -77,6 +78,7 @@ export function CommandCenter({
   csvInput: string;
   invalidRows: number;
   busyAction: string | null;
+  stagingProgress: string;
   tokenOpsReadiness: TokenOpsReadiness;
   tokenOpsResult: TokenOpsDistributionResult | null;
   distributionMode: TokenOpsMode;
@@ -100,6 +102,8 @@ export function CommandCenter({
   const liveStaging = busyAction === "tokenops-live";
   const previewing = busyAction === "tokenops-preview";
   const hasLiveEvidence = tokenOpsResult?.runtime === "live" || Boolean(campaign.stageTxHash);
+  const waitingForRelayer = liveStaging && /encrypting|zama relayer/i.test(stagingProgress);
+  const waitingForWallet = liveStaging && /open your wallet|sign claim authorization/i.test(stagingProgress);
 
   const steps = [
     {
@@ -235,13 +239,20 @@ export function CommandCenter({
             onClick={onTokenOpsSync}
             className="ml-auto"
           >
-            {liveStaging ? "Opening wallet" : "Stage live on Sepolia"}
+            {liveStaging
+              ? waitingForRelayer
+                ? "Encrypting with Zama"
+                : waitingForWallet
+                  ? "Open wallet"
+                  : "Staging"
+              : "Stage live on Sepolia"}
           </Button>
         </div>
         <p className={cn("mt-3 text-[12px]", liveStagingReady ? "text-mint-bright" : "text-amber")}>
-          {liveStagingReady
+          {stagingProgress ||
+          (liveStagingReady
             ? "Live staging is ready. The next click should open wallet prompts for TokenOps transactions."
-            : liveStagingHint}
+            : liveStagingHint)}
         </p>
         <LiveLaunchProof
           ready={liveStagingReady}

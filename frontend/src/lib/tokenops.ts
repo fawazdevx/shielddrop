@@ -22,6 +22,7 @@ export type TokenOpsCampaignDraft = {
   tokenAddress: string;
   tokenSymbol: string;
   recipients: Recipient[];
+  onProgress?: (message: string) => void;
 };
 
 export type TokenOpsMode = "confidential-airdrop" | "confidential-disperse";
@@ -175,6 +176,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
         : this.createLiveAirdrop(draft, readiness);
     }
 
+    draft.onProgress?.("Preparing demo claim packets.");
     await wait(500);
     const campaignId = `tokenops-${draft.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
     const airdropAddress = fakeHex(`${campaignId}:airdrop`, 20);
@@ -232,6 +234,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
 
     // Fund the clone in the same tx so recipients can actually claim tokens.
     // Prerequisite: the factory must be an operator on the confidential token.
+    draft.onProgress?.("Checking TokenOps operator approval.");
     let setupTxHash: Hex | undefined;
     const factoryIsOperator = await publicClient.readContract({
       address: draft.tokenAddress as ViemAddress,
@@ -240,6 +243,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
       args: [admin, AIRDROP_FACTORY as ViemAddress]
     });
     if (!factoryIsOperator) {
+      draft.onProgress?.("Open your wallet to approve the TokenOps operator.");
       const operatorDeadline = Math.floor(Date.now() / 1000) + OPERATOR_DEADLINE_SECONDS;
       const setOperatorHash = await walletClient.writeContract({
         account: admin,
@@ -250,9 +254,11 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
         args: [AIRDROP_FACTORY as ViemAddress, operatorDeadline]
       });
       setupTxHash = setOperatorHash;
+      draft.onProgress?.("Waiting for operator approval to confirm.");
       await publicClient.waitForTransactionReceipt({ hash: setOperatorHash });
     }
 
+    draft.onProgress?.("Encrypting funding input with the Zama relayer. The stage transaction prompt comes after this.");
     const fundingInput = await encryptUint64({
       encryptor,
       contractAddress: AIRDROP_FACTORY as ViemAddress,
@@ -261,6 +267,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
     });
     const { startTimestamp, endTimestamp } = await safeAirdropWindow(publicClient);
 
+    draft.onProgress?.("Open your wallet to create and fund the confidential airdrop.");
     const { hash, airdrop } = await factory.createAndFundConfidentialAirdrop({
       params: {
         token: draft.tokenAddress as ViemAddress,
@@ -272,15 +279,18 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
       userSalt,
       encryptedInput: fundingInput
     });
+    draft.onProgress?.("Waiting for the stage transaction to confirm.");
 
     const claimPackets: TokenOpsClaimPacket[] = [];
-    for (const recipient of clearRecipients) {
+    for (const [index, recipient] of clearRecipients.entries()) {
+      draft.onProgress?.(`Encrypting claim packet ${index + 1}/${clearRecipients.length} with the Zama relayer.`);
       const encryptedInput = await encryptUint64({
         encryptor,
         contractAddress: airdrop,
         userAddress: recipient.address as ViemAddress,
         value: recipient.amount
       });
+      draft.onProgress?.(`Sign claim authorization ${index + 1}/${clearRecipients.length}.`);
       const signature = await signClaimAuthorization({
         walletClient,
         airdropAddress: airdrop,
@@ -328,6 +338,7 @@ export class TokenOpsSdkAdapter implements TokenOpsAdapter {
     const addresses = clearRecipients.map((r) => r.address as ViemAddress);
     const amounts = clearRecipients.map((r) => r.amount);
 
+    draft.onProgress?.("Open your wallet to submit the confidential disperse transaction.");
     const result = await disperse.disperse({
       token: draft.tokenAddress as ViemAddress,
       recipients: addresses,
